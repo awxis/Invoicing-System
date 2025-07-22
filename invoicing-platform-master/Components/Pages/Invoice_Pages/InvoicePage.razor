@@ -1,0 +1,2283 @@
+﻿@page "/invoicesPage"
+@rendermode InteractiveServer
+@using Client_Invoice_System.Helpers
+@using Client_Invoice_System.Models
+@using Client_Invoice_System.Repository
+@using Client_Invoice_System.Services
+@using Client_Invoice_System.Components
+@using System.ComponentModel.DataAnnotations
+@inject InvoiceService InvoiceService
+@inject ClientRepository ClientRepo
+@inject ResourceRepository ResourceRepository
+@inject ReceiptRepository ReceiptRepository
+@inject EmployeeRepository EmployeeRepository
+@inject OwnerRepository OwnerProfileRepository
+@inject ToastService ToastService
+@inject CountryCurrencyRepository CountryCurrencyRepo
+@inject IJSRuntime JS
+@inject IPaginationService<Invoice> PaginationService
+
+<div class="d-flex align-items-center">
+    <Breadcrumb />
+</div>
+<h3 class="mb-4 fw-bold">Invoice Management</h3>
+
+<div class="row align-items-end mb-3">
+    <div class="col-12">
+        <button class="btn btn-primary" @onclick="ShowCreateInvoiceModal">
+            <i class="bi bi-file-earmark-text me-1"></i> Create Invoice
+        </button>
+    </div>
+</div>
+
+<!-- Create Invoice Modal -->
+@if (isCreateInvoiceModalVisible || isEditInvoiceModalVisible)
+{
+    <div class="modal-overlay">
+        <div class="create-modal">
+            <h4 class="mb-4 fw-bold">@(isEditInvoiceModalVisible ? "Edit Invoice" : "Generate Invoice")</h4>
+            <EditForm Model="this" OnValidSubmit="@(isEditInvoiceModalVisible ? UpdateInvoice : GenerateInvoice)">
+                <DataAnnotationsValidator />
+                <ValidationSummary class="text-danger mb-3" />
+
+                <div class="row">
+                    <!-- Client Searchable Dropdown -->
+                    <div class="col-lg-6 col-md-6 col-sm-6 position-relative mb-3">
+                        <label for="clientSearch" class="fw-bold"><i class="bi bi-person-fill me-1"></i> Clients</label>
+                        <input type="text" id="clientSearch" class="form-control" placeholder="Search client..."
+                        @bind="clientSearchQuery" @oninput="FilterClients"
+                        @onfocus="() => ShowClientDropdown = true"
+                        @onblur="OnClientSearchBlur" />
+                        @if (ShowClientDropdown)
+                        {
+                            <ul class="dropdown-menu show w-100" style="max-height: 200px; overflow-y: auto;">
+                                @if (filteredClients.Any())
+                                {
+                                    @foreach (var client in filteredClients)
+                                    {
+                                        <li class="dropdown-item"
+                                        @onclick="() => SelectClient(client.ClientId, client.Name,client.CountryCurrency?.Symbol)"
+                                        style="cursor: pointer;">
+                                            @client.Name @(client.CountryCurrency?.Symbol ?? "-")
+                                        </li>
+                                    }
+                                }
+                                else if (!string.IsNullOrWhiteSpace(clientSearchQuery))
+                                {
+                                    <li class="dropdown-item text-muted">No clients found</li>
+                                }
+                            </ul>
+                        }
+                    </div>
+
+                    <!-- Owner Profile Searchable Dropdown -->
+                    <div class="col-lg-6 col-md-6 col-sm-6 position-relative mb-3">
+                        <label for="ownerProfileSearch" class="fw-bold"><i class="bi bi-person-badge me-1"></i> Owner Profiles</label>
+                        <input type="text" id="ownerProfileSearch" class="form-control" placeholder="Search owner profile..."
+                        @bind="ownerProfileSearchQuery" @oninput="FilterOwnerProfiles"
+                        @onfocus="() => ShowOwnerProfileDropdown = true"
+                        @onblur="OnOwnerProfileSearchBlur" />
+                        @if (ShowOwnerProfileDropdown)
+                        {
+                            <ul class="dropdown-menu show w-100" style="max-height: 200px; overflow-y: auto;">
+                                @if (filteredOwnerProfiles.Any())
+                                {
+                                    @foreach (var ownerProfile in filteredOwnerProfiles)
+                                    {
+                                        <li class="dropdown-item"
+                                        @onclick="() => SelectOwnerProfile(ownerProfile.Id, ownerProfile.OwnerName, (ownerProfile.CountryCurrency?.Symbol))"
+                                        style="cursor: pointer;">
+                                            @ownerProfile.OwnerName (@(ownerProfile.CountryCurrency?.Symbol ?? "-"))
+                                        </li>
+                                    }
+                                }
+                                else if (!string.IsNullOrWhiteSpace(ownerProfileSearchQuery))
+                                {
+                                    <li class="dropdown-item text-muted">No owner profiles found</li>
+                                }
+                            </ul>
+                        }
+                    </div>
+
+                    <!-- Employee Searchable Dropdown -->
+                    <div class="col-lg-6 col-md-6 col-sm-6 position-relative mb-3">
+                        <label for="employeeSearch" class="fw-bold"><i class="bi bi-person-workspace me-1"></i> Employees</label>
+                        <input type="text" id="employeeSearch" class="form-control" placeholder="Search employee..."
+                        @bind="employeeSearchQuery" @oninput="FilterEmployees"
+                        @onfocus="() => ShowEmployeeDropdown = true"
+                        @onblur="OnEmployeeSearchBlur"
+                        disabled="@(StartDate.HasValue || EndDate.HasValue)" />
+                        @if (ShowEmployeeDropdown)
+                        {
+                            <ul class="dropdown-menu show w-100" style="max-height: 200px; overflow-y: auto;">
+                                @if (filteredEmployees.Any())
+                                {
+                                    @foreach (var employee in filteredEmployees)
+                                    {
+                                        <li class="dropdown-item"
+                                        @onclick="() => SelectEmployee(employee.EmployeeId, employee.EmployeeName)"
+                                        style="cursor: pointer;">
+                                            @employee.EmployeeName
+                                        </li>
+                                    }
+                                }
+                                else if (!string.IsNullOrWhiteSpace(employeeSearchQuery))
+                                {
+                                    <li class="dropdown-item text-muted">No employees found</li>
+                                }
+                            </ul>
+                        }
+                    </div>
+
+                    <!-- Bank Account Dropdown (Visible after owner is selected) -->
+                    @if (SelectedOwnerProfileId > 0)
+                    {
+                        <div class="col-lg-6 col-md-6 col-sm-6 position-relative mb-3">
+                            <label for="bankAccountSearch" class="fw-bold"><i class="bi bi-bank me-1"></i> Bank Account</label>
+                            <input type="text" id="bankAccountSearch" class="form-control"
+                            placeholder="Search bank account..."
+                            @bind="bankAccountSearchQuery"
+                            @onfocus="() => ShowBankAccountDropdown = true"
+                            @onblur="OnBankAccountSearchBlur" />
+                            @if (ShowBankAccountDropdown)
+                            {
+                                <ul class="dropdown-menu show w-100" style="max-height: 200px; overflow-y: auto;">
+                                    @if (filteredBankAccounts.Any())
+                                    {
+                                        @foreach (var bankAccount in filteredBankAccounts)
+                                        {
+                                            <li class="dropdown-item"
+                                            @onclick="() => SelectBankAccount(bankAccount.Id, bankAccount.Label)"
+                                            style="cursor: pointer;">
+                                                @bankAccount.Label (@bankAccount.BankName - @bankAccount.AccountNumber)
+                                            </li>
+                                        }
+                                    }
+                                    else if (!string.IsNullOrWhiteSpace(bankAccountSearchQuery))
+                                    {
+                                        <li class="dropdown-item text-muted">No bank accounts found</li>
+                                    }
+                                    else
+                                    {
+                                        <li class="dropdown-item text-muted">No bank accounts available for this owner</li>
+                                    }
+                                </ul>
+                            }
+                        </div>
+                    }
+
+                    <!-- Variation -->
+                    <div class="col-md-6 mb-3">
+                        <label for="resource" class="fw-bold"><i class="bi bi-box-seam me-1"></i> Resource</label>
+                        <InputSelect id="resource" class="form-control" @bind-Value="SelectedResourceId">
+                            <option value="0">Select Resource</option>
+                            @foreach (var resource in AvailableResources)
+                            {
+                                <option value="@resource.ResourceId">@resource.ResourceName (@resource.Employee?.EmployeeName)</option>
+                            }
+                        </InputSelect>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label for="variation" class="fw-bold"><i class="bi bi-list-check me-1"></i> Variation</label>
+                        <InputSelect id="variation" class="form-control" @bind-Value="Variation" @onchange="OnVariationChanged">
+                            <option value="">Please Select Variation</option>
+                            <option value="@InvoiceItem.ContractVariation.Hourly">Hourly</option>
+                            <option value="@InvoiceItem.ContractVariation.Fixed">Fixed</option>
+                        </InputSelect>
+                    </div>
+                    <!-- Rate (Visible for Hourly) -->
+                    @if (Variation == InvoiceItem.ContractVariation.Hourly)
+                    {
+                        <div class="col-md-6 mb-3">
+                            <label for="rate" class="fw-bold"><i class="bi bi-currency-dollar me-1"></i> Rate</label>
+                            <InputNumber id="rate" class="form-control" @bind-Value="Rate" />
+                            <ValidationMessage For="@(() => Rate)" />
+                        </div>
+                    }
+
+                    <!-- Consumed Hours (Visible for Hourly) -->
+                    @if (Variation == InvoiceItem.ContractVariation.Hourly)
+                    {
+                        <div class="col-md-6 mb-3">
+                            <label for="consumedHours" class="fw-bold"><i class="bi bi-clock-history me-1"></i> Consumed Hours</label>
+                            <InputNumber id="consumedHours" class="form-control" @bind-Value="ConsumedHours" />
+                            <ValidationMessage For="@(() => ConsumedHours)" />
+                        </div>
+                    }
+
+                    <!-- Amount (Visible for Fixed) -->
+                    @if (Variation == InvoiceItem.ContractVariation.Fixed)
+                    {
+                        <div class="col-md-6 mb-3">
+                            <label for="amount" class="fw-bold"><i class="bi bi-currency-dollar me-1"></i> Amount</label>
+                            <InputNumber id="amount" class="form-control" @bind-Value="Amount" />
+                            <ValidationMessage For="@(() => Amount)" />
+                        </div>
+                    }
+
+                    <!-- Due Date -->
+                    <div class="col-md-6 mb-3">
+                        <label for="dueDate" class="fw-bold"><i class="bi bi-calendar-check me-1"></i> Due Date</label>
+                        <InputDate id="dueDate" class="form-control" @bind-Value="DueDate" required />
+                        <ValidationMessage For="@(() => DueDate)" />
+                    </div>
+
+                    <!-- Purpose Code -->
+                    <div class="col-md-6 mb-3">
+                        <label for="purposeCode" class="fw-bold"><i class="bi bi-box-seam me-1"></i> Purpose Code</label>
+                        <InputText id="purposeCode" class="form-control" @bind-Value="purposeCode" required />
+                        <ValidationMessage For="@(() => purposeCode)" />
+                    </div>
+
+                    <!-- Currency Dropdown -->
+                    <div class="col-md-6 mb-3 position-relative">
+                        <label for="currencySearch" class="fw-bold"><i class="bi bi-currency-exchange me-1"></i> Owner Currency</label>
+                        <input type="text" id="currencySearch" class="form-control" placeholder="Search currency..."
+                        @bind="currencySearchQuery" @oninput="FilterCurrencies"
+                        @onfocus="() => ShowCurrencyDropdown = true"
+                        @onblur="OnCurrencySearchBlur" />
+                        @if (ShowCurrencyDropdown)
+                        {
+                            <ul class="dropdown-menu show w-100" style="max-height: 200px; overflow-y: auto;">
+                                <li class="dropdown-item"
+                                @onclick="@(() => SelectCurrency(null, "Default (Owner's Currency)", ""))"
+                                style="cursor: pointer;">
+                                    Default (Owner's Currency)
+                                </li>
+                                @if (filteredCurrencies.Any())
+                                {
+                                    @foreach (var currency in filteredCurrencies)
+                                    {
+                                        var displayText = $"{currency.CurrencyName} ({currency.Symbol})";
+                                        <li class="dropdown-item"
+                                        @onclick="@(() => SelectCurrency(currency.Id, displayText, currency.Symbol))"
+                                        style="cursor: pointer;">
+                                            @displayText
+                                        </li>
+                                    }
+                                }
+                                else if (!string.IsNullOrWhiteSpace(currencySearchQuery))
+                                {
+                                    <li class="dropdown-item text-muted">No currencies found</li>
+                                }
+                            </ul>
+                        }
+                    </div>
+
+                    <div class="col-md-6 mb-3">
+                        <label for="paymentCommunication" class="fw-bold"><i class="bi bi-box-seam me-1"></i>Payment Communication</label>
+                        <InputText id="paymentCommunication" class="form-control" @bind-Value="paymentCommunication" required />
+                    </div>
+
+                    <!-- Target Currency Conversion Rate -->
+                    @if (targetCurrencyConversion || TargetCurrencyConversionRate != 1)
+                    {
+                        <div class="col-md-6 mb-3">
+                            <label for="conversionRate" class="fw-bold"><i class="bi bi-currency-exchange me-1"></i> Target Currency Conversion Rate</label>
+                            <InputNumber id="conversionRate" class="form-control" @bind-Value="TargetCurrencyConversionRate" placeholder="e.g., 0.75 for USD to GBP" step="0.01" min="0" />
+                            <small class="form-text text-muted">Enter the rate to convert to the client's currency (e.g., 0.75 for USD to GBP). Leave as 1 if no conversion is needed.</small>
+                        </div>
+                    }
+
+
+                    <!-- Image Upload for Payment Guidelines -->
+                    <div class="col-md-6 mb-3">
+                        <label for="paymentGuidelineImage" class="fw-bold"><i class="bi bi-image me-1"></i> Payment Guideline Snapshot</label>
+                        <InputFile id="paymentGuidelineImage" class="form-control" OnChange="OnImageUpload" accept=".jpg,.jpeg,.png" multiple="false" />
+                        <ValidationMessage For="@(() => PaymentGuidelineImage)" />
+                        @if (PaymentGuidelineImage != null && PaymentGuidelineImage.Length > 0)
+                        {
+                            <p>Selected image: @(PaymentGuidelineImage.Length / 1024) KB</p>
+                        }
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-end gap-2">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-file-earmark-text me-1"></i> @(isEditInvoiceModalVisible ? "Update Invoice" : "Generate Invoice")
+                    </button>
+                    <button type="button" class="btn btn-secondary" @onclick="CancelCreateInvoice">
+                        <i class="bi bi-x-circle me-1"></i> Cancel
+                    </button>
+                </div>
+            </EditForm>
+        </div>
+    </div>
+}
+
+<!-- Invoice Table -->
+<div class="card p-3 shadow-lg rounded-4 bg-white">
+    <div class="row mb-3 align-items-center">
+        <div class="col-12 col-md-6">
+            <h4 class="mb-3 fw-bold">Existing Invoices</h4>
+        </div>
+        @*  <div class="col-12">
+            <div class="d-flex flex-wrap align-items-end gap-2 justify-content-end"> *@
+        <div class="col-12">
+            <div class="d-flex flex-wrap justify-content-end gap-2">
+                <!-- From Date with Label -->
+                <div class="d-flex flex-column">
+                    <label class="form-label mb-0" style="font-size: 0.85rem;">From</label>
+                    <input type="date"
+                    class="form-control form-control-sm w-auto"
+                    value="@(fromDate?.ToString("yyyy-MM-dd"))"
+                    @onchange="OnFromDateChanged" />
+                </div>
+
+                <!-- To Date with Label -->
+                <div class="d-flex flex-column">
+                    <label class="form-label mb-0" style="font-size: 0.85rem;">To</label>
+                    <input type="date"
+                    class="form-control form-control-sm w-auto"
+                    value="@(toDate?.ToString("yyyy-MM-dd"))"
+                    @onchange="OnToDateChanged" />
+                </div>
+
+                <!-- Invoice Status Dropdown -->
+                <div class="d-flex flex-column">
+                    <label class="form-label mb-0" style="font-size: 0.85rem;">Status</label>
+                    <select class="form-control form-control-sm w-auto" @onchange="GetInvoiceByStatus">
+                        <option value="">All</option>
+                        <option value="Paid">Paid</option>
+                        <option value="PartiallyPaid">Partially Paid</option>
+                        <option value="Pending">Pending</option>
+                    </select>
+                </div>
+
+                <!-- Email Status Dropdown -->
+                <div class="d-flex flex-column">
+                    <label class="form-label mb-0" style="font-size: 0.85rem;">Email</label>
+                    <select class="form-control form-control-sm w-auto" @onchange="GetInvoiceByEmailStatus">
+                        <option value="">All</option>
+                        <option value="Sent">Sent</option>
+                        <option value="Not Sent">Not Sent</option>
+                    </select>
+                </div>
+
+                <!-- Search Box -->
+                <div class="d-flex flex-column" style="max-width: 300px;">
+                    <label class="form-label mb-0" style="font-size: 0.85rem;">Search</label>
+                    <div class="input-group input-group-sm shadow rounded">
+                        <input type="text"
+                        class="form-control border-primary rounded-start"
+                        placeholder=""
+                        @bind="searchQuery"
+                        @oninput="FilterInvoices" />
+                        <button class="btn btn-primary fw-bold px-3" @onclick="FilterInvoices">
+                            <i class="bi bi-search"></i>
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+    </div>
+
+    @if (pagedInvoices != null && pagedInvoices.Any())
+    {
+        <div class="table-responsive div-responsive">
+            <table class="table table-striped">
+                <thead>
+                    <tr>
+                        <th @onclick="@(() => SortByColumn("InvoiceNumber"))" style="cursor: pointer;">
+                            Invoice #
+                            @if (sortColumn == "InvoiceNumber")
+                            {
+                                <i class="bi @(sortAscending ? "bi-sort-up" : "bi-sort-down")"></i>
+                            }
+                            else
+                            {
+                                <i class="bi bi-filter" style="opacity: 0.5;"></i>
+                            }
+                        </th>
+
+                        <th>Client</th>
+
+                        <th @onclick="@(() => SortByColumn("InvoiceDate"))" style="cursor: pointer;">
+                            Invoice Date
+                            @if (sortColumn == "InvoiceDate")
+                            {
+                                <i class="bi @(sortAscending ? "bi-sort-up" : "bi-sort-down")"></i>
+                            }
+                            else
+                            {
+                                <i class="bi bi-filter" style="opacity: 0.5;"></i>
+                            }
+                        </th>
+                        <th>Total Amount</th>
+                        <th>Variation Type</th>
+                        <th>Currency</th>
+                        <th>Status</th>
+                        <th>Email Status</th>
+                        <th class="pe-4">Invoice Actions</th>
+                        <th>Receipt Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var invoice in pagedInvoices)
+                    {
+                        <tr>
+                            <td>
+                                @{
+                                    var seriesStart = invoice.Client?.InvoiceSeriesStart ?? 0;
+                                    var invoiceNumber = seriesStart + invoice.InvoiceId;
+                                    var formattedInvoiceNumber = $"INV/{invoice.InvoiceDate.Year}/{invoiceNumber.ToString("D6")}";
+                                    @formattedInvoiceNumber
+                                }
+                            </td>
+                            <td>@(invoice.Client?.Name ?? "Unknown")</td>
+                            <td style="min-width: 170px;">@invoice.InvoiceDate</td>
+                            <td>@(invoice.TargetCurrencyConversionRate != 1 ? invoice.Client?.CountryCurrency?.Symbol ?? "$" : invoice.CountryCurrency?.Symbol ?? "$") @(invoice.TotalAmount.HasValue ? invoice.TotalAmount.Value.ToString("N2") : "0.00")</td>
+                            <td>@(invoice.InvoiceItems.FirstOrDefault()?.Variation.ToString() ?? "N/A")</td>
+                            <td>@(invoice.Client?.CountryCurrency?.CurrencyName ?? "-")</td>
+
+                            <td>
+                                <span class="badge @(invoice.InvoiceStatuses == InvoiceStatus.Paid ? "bg-success" : invoice.InvoiceStatuses == InvoiceStatus.PartiallyPaid ? "bg-warning" : "bg-danger")">
+                                    @(invoice.InvoiceStatuses == InvoiceStatus.Paid ? "Paid" : invoice.InvoiceStatuses == InvoiceStatus.PartiallyPaid ? "Partially Paid" : "Pending")
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge @(invoice.EmailStatus == "Sent" ? "bg-primary" : "bg-warning")">
+                                    @invoice.EmailStatus
+                                </span>
+                            </td>
+                            <td class="nowrap pe-4">
+                                <i class="bi bi-eye-fill btn-icon text-info" @onclick="() => PreviewInvoiceAndReceipt(invoice)" title="Preview"></i>
+                                <i class="bi bi-download btn-icon text-primary" @onclick="() => DownloadInvoiceAndReceipt(invoice)" title="Download"></i>
+                                <i class="bi bi-envelope btn-icon text-success" @onclick="() => ShowSendEmailModal(invoice.InvoiceId, invoice.Client?.Name)" title="Send Email"></i>
+                                <i class="bi bi-cash-stack btn-icon text-warning" @onclick="() => ShowMarkAsPaidModal(invoice.InvoiceId, invoice.Client?.Name)" disabled="@(invoice.InvoiceStatuses == InvoiceStatus.Paid)" title="Mark as Paid"></i>
+                                <i class="bi bi-trash btn-icon text-danger" @onclick="() => ShowDeleteInvoiceModal(invoice.InvoiceId, invoice.Client?.Name)" title="Delete"></i>
+                                <i class="bi bi-pencil-square btn-icon text-warning" @onclick="() => ShowEditInvoiceModal(invoice)" title="Edit"></i>
+                            </td>
+                            <td class="nowrap ps-3">
+                                <!-- Preview Icon -->
+                                <i class="bi bi-eye-fill text-info action-icon @(!invoice.IsPaid ? "disabled-icon" : "")"
+                                @onclick="@(() => { if (invoice.IsPaid) PreviewInvoiceAndReceipt(invoice, true); })"
+                                title="Preview Receipt"></i>
+
+                                <!-- Download Icon - Fixed to match others -->
+                                <i class="bi bi-download text-primary action-icon @(!invoice.IsPaid ? "disabled-icon" : "")"
+                                @onclick="@(() => { if (invoice.IsPaid) DownloadInvoiceAndReceipt(invoice, true); })"
+                                title="Download Receipt"></i>
+
+                                <!-- Email Icon -->
+                                <i class="bi bi-envelope-fill text-success action-icon @(!invoice.IsPaid ? "disabled-icon" : "")"
+                                @onclick="@(async () => { if (invoice.IsPaid) await ShowSendEmailModal(invoice.InvoiceId, invoice.Client?.Name, true); })"
+                                title="Send Receipt"></i>
+                            </td>
+
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination Controls -->
+        <div class="d-flex align-items-center justify-content-center mt-3">
+            <ul class="pagination mb-0">
+                <li class="page-item @(CanGoPrevious ? "" : "disabled")">
+                    <a class="page-link shadow-sm" href="javascript:void(0);" @onclick="PreviousPage">«</a>
+                </li>
+                @for (int i = 1; i <= totalPages; i++)
+                {
+                    <li class="page-item @(i == currentPage ? "active" : "")">
+                        <a class="page-link fw-bold shadow-sm" href="javascript:void(0);" @onclick="() => ChangePage(i)">@i</a>
+                    </li>
+                }
+                <li class="page-item @(CanGoNext ? "" : "disabled")">
+                    <a class="page-link shadow-sm" href="javascript:void(0);" @onclick="NextPage">»</a>
+                </li>
+            </ul>
+            <div class="d-flex align-items-center ms-3">
+                <select class="form-select w-auto text-center shadow-sm border-primary" @onchange="SetPageSize">
+                    @foreach (var size in new int[] { 5, 10, 15, 20, 50, 100 })
+                    {
+                        <option value="@size" selected="@(size == pageSize)">Show @size</option>
+                    }
+                </select>
+            </div>
+        </div>
+    }
+    else
+    {
+        <p class="text-center text-muted">No invoices found.</p>
+    }
+</div>
+
+<!-- Mark as Paid Modal -->
+@if (isMarkAsPaidModalVisible)
+{
+    <div class="modal-overlay">
+        <div class="delete-modal">
+            <p class="fw-bold text-center">
+                Mark invoice for <span class="text-success">@modalClientName</span> as Paid?
+            </p>
+            <div class="d-flex justify-content-center gap-3">
+                <button class="btn btn-warning d-flex align-items-center" @onclick="ConfirmMarkAsPaid">
+                    <i class="bi bi-cash-stack me-1"></i> Yes, Mark as Paid
+                </button>
+                <button class="btn btn-secondary d-flex align-items-center" @onclick="CancelMarkAsPaid">
+                    <i class="bi bi-x-circle me-1"></i> Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+
+
+@if (isEmailModalVisibleForReceipt)
+{
+    <div class="modal-overlay">
+        <div class="delete-modal">
+            @if (!isEmailSending)
+            {
+                <p class="fw-bold text-center">Are you sure you want to send an email to <span class="text-primary">@modalClientName</span>?</p>
+                <div class="d-flex justify-content-center gap-3">
+                    <button class="btn btn-success" @onclick="ConfirmSendEmail" disabled="@isEmailSending">
+                        <i class="bi bi-envelope-check me-1"></i> Yes, Send
+                    </button>
+                    <button class="btn btn-secondary" @onclick="CancelSendEmail" disabled="@isEmailSending">
+                        <i class="bi bi-x-circle me-1"></i> Cancel
+                    </button>
+                </div>
+            }
+            else
+            {
+                <div class="text-center">
+                    <p class="fw-bold text-primary">📨 Sending Email...</p>
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+
+
+
+<!-- Send Email Modal with Preview -->
+@if (isSendEmailModalVisible && !isEmailSending)
+{
+    <div class="modal-overlay d-flex justify-content-center align-items-center" style="flex-wrap: wrap; gap: 10px;">
+        <div class="create-modal" style="width: @(isPreviewVisible ? "50%" : "600px"); max-width: 600px; transition: width 0.3s ease;">
+            <h4 class="mb-4 fw-bold">Send Email to @modalClientName</h4>
+            <EditForm Model="emailModel" OnValidSubmit="ConfirmSendEmail">
+                <DataAnnotationsValidator />
+                <ValidationSummary class="text-danger mb-3" />
+
+                <!-- Invoice Attachment Toggle -->
+                <div class="form-check form-switch mb-3">
+                    <InputCheckbox id="includeInvoice" class="form-check-input" @bind-Value="emailModel.IncludeInvoice" />
+                    <label class="form-check-label" for="includeInvoice">Include Invoice PDF</label>
+                </div>
+
+                <!-- Additional Files Toggle -->
+                <div class="form-check form-switch mb-3">
+                    <InputCheckbox id="includeAdditionalFiles" class="form-check-input" @bind-Value="emailModel.IncludeAdditionalFiles" />
+                    <label class="form-check-label" for="includeAdditionalFiles">Include Additional Files</label>
+                </div>
+                @if (emailModel.IncludeAdditionalFiles)
+                {
+                    <InputFile id="additionalFiles" class="form-control mt-2" multiple
+                    OnChange="OnAdditionalFilesUpload" accept=".pdf,.docx,.jpg,.png" />
+                    @if (emailModel.FileAttachments.Any())
+                    {
+                        <ul class="list-group mt-2">
+                            @foreach (var file in emailModel.FileAttachments)
+                            {
+                                <li class="list-group-item">
+                                    @file.FileName (Size: @(file.Data.Length / 1024) KB)
+                                    <button type="button" class="btn btn-sm btn-danger ms-2" @onclick="() => RemoveFile(file)">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </li>
+                            }
+                        </ul>
+                    }
+                }
+
+                <!-- Dynamic Email Template Editor -->
+                <div class="mb-3">
+                    <label class="form-label">Email Template</label>
+                    <textarea class="form-control" rows="6" @bind="emailModel.CustomTemplate"
+                    placeholder="Use placeholders: {ClientName}, {InvoiceNumber}, {DueDate}">
+                        Dear {ClientName},
+
+                        Thank you for your business with Atrule Technologies. We have attached your invoice (Invoice #{InvoiceNumber}) for your review.
+
+                        Invoice Number: {InvoiceNumber}
+                        Due Date: {DueDate}
+
+                        Please find the invoice attached as a PDF. Ensure payment is made by the due date to avoid any late fees.
+                    </textarea>
+                    <small class="form-text text-muted">
+                        Example: Use line breaks and placeholders: {ClientName}, {InvoiceNumber}, {DueDate}.
+                    </small>
+                </div>
+
+                <div class="d-flex justify-content-end gap-2">
+                    <button type="button" class="btn btn-info mb-3" @onclick="TogglePreview">
+                        <i class="bi bi-eye"></i> @(!isPreviewVisible ? "Show Preview" : "Hide Preview")
+                    </button>
+                    <button type="submit" class="btn btn-success" disabled="@isEmailSending">
+                        <i class="bi bi-envelope-check me-1"></i> Send Email
+                    </button>
+                    <button type="button" class="btn btn-secondary" @onclick="CancelSendEmail" disabled="@isEmailSending">
+                        <i class="bi bi-x-circle me-1"></i> Cancel
+                    </button>
+                </div>
+            </EditForm>
+        </div>
+
+        <!-- Preview Modal -->
+        @if (isPreviewVisible)
+        {
+            <div class="create-modal" style="width: 50%; max-width: 600px; overflow-y: auto; max-height: 80vh; background-color: #f8f9fa; transition: width 0.3s ease;">
+                <h5 class="mb-3 fw-bold">Email Preview</h5>
+                <div class="border p-3" style="background-color: #fff;">
+                    @if (!string.IsNullOrEmpty(previewBody))
+                    {
+                        @((MarkupString)WrapPreviewHtml(previewBody))
+                    }
+                    else
+                    {
+                        <p class="text-muted">No preview available. Edit the template and click "Show Preview" to generate.</p>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+}
+
+
+<!-- Sending Loader Modal -->
+@if (isEmailSending)
+{
+    <div class="modal-overlay d-flex justify-content-center align-items-center">
+        <div class="create-modal" style="width: 200px; padding: 20px; text-align: center; border-radius: 10px;">
+            <i class="bi bi-envelope-fill" style="font-size: 1.5rem; color: #2f4f4f;"></i>
+            <p class="mt-2 mb-3" style="font-size: 0.9rem; color: #2f4f4f;">Email Sending...</p>
+            <div class="spinner-border text-primary" style="width: 1.5rem; height: 1.5rem;" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+    </div>
+}
+
+
+<!-- Delete Invoice Modal -->
+@if (isDeleteInvoiceModalVisible)
+{
+    <div class="modal-overlay">
+        <div class="delete-modal">
+            <p class="fw-bold text-center">Are you sure you want to delete the invoice for <span class="text-danger">@modalClientName</span>?</p>
+            <div class="d-flex justify-content-center gap-3">
+                <button class="btn btn-danger" @onclick="ConfirmDeleteInvoice">
+                    <i class="bi bi-trash me-1"></i> Yes, Delete
+                </button>
+                <button class="btn btn-secondary" @onclick="CancelDeleteInvoice">
+                    <i class="bi bi-x-circle me-1"></i> Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+
+    .action-icon {
+    cursor: pointer;
+    font-size: 1.25rem;
+    margin-right: 1rem;
+    padding: 0.3rem;
+    transition: all 0.2s ease;
+    display: inline-block;
+    }
+
+    /* Disabled State */
+    .action-icon.disabled-icon {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+    }
+
+    /* Hover Effects */
+    .action-icon:not(.disabled-icon):hover {
+    transform: scale(1.15);
+    background-color: rgba(0, 0, 0, 0.08);
+    border-radius: 4px;
+    }
+
+
+    .btn-icon {
+    cursor: pointer;
+    font-size: 1.2rem;
+    margin-right: 0.75rem;
+    padding: 0.25rem;
+    border-radius: 4px;
+    }
+
+    .btn-icon:hover {
+    opacity: 0.8;
+    background-color: rgba(0, 0, 0, 0.05);
+    }
+
+    .btn-icon:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    }
+
+    .container {
+    max-width: 1200px;
+    }
+
+    .table-responsive {
+    overflow-x: auto;
+    min-width: 100%;
+    display: block;
+    white-space: nowrap;
+    }
+
+    .div-responsive {
+    max-width: calc(100vw - 350px);
+    }
+
+    th, td {
+    min-width: 150px;
+    }
+
+    td.nowrap {
+    white-space: nowrap;
+    }
+
+    .modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 1050;
+    }
+
+    .delete-modal {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+    text-align: center;
+    max-width: 600px;
+    width: 100%;
+    }
+
+    .create-modal {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+    max-width: 600px;
+    width: 100%;
+    text-align: left;
+    }
+
+    .create-modal label {
+    text-align: left;
+    display: block;
+    }
+
+    .btn-sm {
+    min-width: 70px;
+    }
+
+    tbody td {
+    text-align: center;
+    vertical-align: middle;
+    }
+
+    thead th {
+    text-align: center;
+    }
+
+    th[style*="cursor: pointer"]:hover {
+    background-color: #f8f9fa;
+    }
+
+    .bi-sort-up, .bi-sort-down {
+    color: #0d6efd; /* Bootstrap primary color */
+    }
+</style>
+
+@code {
+    private List<Client> Clients = new();
+    private List<Client> filteredClients = new();
+    private List<Employee> Employees = new();
+    private List<Employee> filteredEmployees = new();
+    private List<OwnerProfile> OwnerProfiles = new();
+    private List<OwnerProfile> filteredOwnerProfiles = new();
+    private List<CountryCurrency> OwnerCurrencies = new();
+    private List<CountryCurrency> filteredCurrencies = new();
+    private List<Resource> AvailableResources = new();
+    private IQueryable<Invoice> InvoicesQuery;
+    private List<Invoice> pagedInvoices = new();
+    private List<Invoice> AllInvoices = new();
+    private int _selectedClientId;
+    private string selectedClientName = string.Empty;
+    private int _selectedOwnerProfileId;
+    private string selectedOwnerProfileName = string.Empty;
+    private int _selectedEmployeeId;
+    private string selectedEmployeeName = string.Empty;
+    private int SelectedResourceId;
+    private decimal ConsumedHours;
+    private decimal Rate;
+    private decimal Amount;
+    private InvoiceItem.ContractVariation? Variation = null;
+    private int? SelectedOwnerCurrencyId;
+    private byte[] PaymentGuidelineImage;
+    private string SelectedStatus = "";
+    private string SelectedEmailStatus = "";
+    private string searchQuery = "";
+    private string clientSearchQuery = "";
+    private string ownerProfileSearchQuery = "";
+    private string employeeSearchQuery = "";
+    private string currencySearchQuery = "";
+    private int pageSize = 5;
+    private int currentPage = 1;
+    private int totalPages = 1;
+    private int totalCount = 0;
+    private bool isCreateInvoiceModalVisible = false;
+    private bool isMarkAsPaidModalVisible = false;
+    private bool isSendEmailModalVisible = false;
+    private bool isEmailModalVisibleForReceipt = false;
+    private bool isDeleteInvoiceModalVisible = false;
+    private bool ShowClientDropdown { get; set; }
+    private bool ShowOwnerProfileDropdown { get; set; }
+    private bool ShowEmployeeDropdown { get; set; }
+    private bool ShowCurrencyDropdown { get; set; }
+    private string modalClientName = string.Empty;
+    private string MarkAsPaidErrorMessage = string.Empty;
+    private bool isEmailSending = false;
+    private int selectedPageSize = 5;
+    private bool CanGoPrevious => currentPage > 1;
+    private bool CanGoNext => currentPage < totalPages;
+    private DateTime? StartDate { get; set; }
+    private DateTime? EndDate { get; set; }
+    [Required(ErrorMessage = "Due Date is required.")]
+    private DateTime? DueDate { get; set; }
+    [Required(ErrorMessage = "Purpose Code is required.")]
+    private string purposeCode { get; set; }
+    private decimal TargetCurrencyConversionRate { get; set; } = 1m;
+    private int modalInvoiceId;
+    private EmailModel emailModel = new EmailModel();
+    private bool isPreviewVisible = false;
+    private string previewBody = string.Empty;
+    private string bankAccountSearchQuery = string.Empty;
+    private bool ShowBankAccountDropdown = false;
+    private List<OwnerBankAccount> filteredBankAccounts = new();
+    private int? SelectedBankAccountId;
+    private string SelectedBankAccountName = string.Empty;
+    private string paymentCommunication = string.Empty;
+    private DateTime? fromDate;
+    private DateTime? toDate;
+    private string sortColumn = "InvoiceDate";
+    private bool sortAscending = false;
+    private bool targetCurrencyConversion = false;
+    private string clientCurrencySymbol = string.Empty;
+    private string ownerCurrencySymbol = string.Empty;
+    private bool isEditInvoiceModalVisible = false;
+    private int editingInvoiceId = 0;
+    private bool isUpdateModd = false;
+
+    private int SelectedClientId
+    {
+        get => _selectedClientId;
+        set
+        {
+            if (_selectedClientId != value)
+            {
+                _selectedClientId = value;
+                _ = OnClientChanged();
+            }
+        }
+    }
+
+    private int SelectedOwnerProfileId
+    {
+        get => _selectedOwnerProfileId;
+        set
+        {
+            if (_selectedOwnerProfileId != value)
+            {
+                _selectedOwnerProfileId = value;
+                _ = OnOwnerProfileChanged();
+            }
+        }
+    }
+
+    private int SelectedEmployeeId
+    {
+        get => _selectedEmployeeId;
+        set
+        {
+            if (_selectedEmployeeId != value)
+            {
+                _selectedEmployeeId = value;
+                _ = OnEmployeeChanged();
+            }
+        }
+    }
+
+
+
+
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            Clients = (await ClientRepo.GetAllAsync(true)).ToList();
+            filteredClients = new List<Client>(Clients);
+            OwnerProfiles = (await OwnerProfileRepository.GetAllAsync(true)).ToList();
+            filteredOwnerProfiles = new List<OwnerProfile>(OwnerProfiles);
+            Employees = (await EmployeeRepository.GetAllAsync()).ToList();
+            filteredEmployees = new List<Employee>(Employees);
+            OwnerCurrencies = await CountryCurrencyRepo.GetAllAsync();
+            filteredCurrencies = new List<CountryCurrency>(OwnerCurrencies);
+            await RefreshInvoices();
+            PaginationService.SetPageSize(selectedPageSize);
+            await LoadInvoices();
+            await FilterInvoices();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in OnInitializedAsync: {ex.Message}\nStackTrace: {ex.StackTrace}");
+            ToastService.Notify("error", $"Error loading invoices: {ex.Message}");
+        }
+    }
+    private class EmailModel
+    {
+        public bool IncludeInvoice { get; set; }
+        public bool IncludeAdditionalFiles { get; set; }
+        public List<FileData> FileAttachments { get; set; } = new List<FileData>();
+        public string CustomTemplate { get; set; } = @"
+Dear {ClientName},
+Thank you for your business with Atrule Technologies. We have attached your invoice (Invoice #{InvoiceNumber}) for your review.
+Invoice Number: {InvoiceNumber}
+Due Date: {DueDate}
+Please find the invoice attached as a PDF. Ensure payment is made by the due date to avoid any late fees.
+Best regards,
+The Atrule Technologies Team";
+    }
+    public class FileData
+    {
+        public string FileName { get; set; }
+        public byte[] Data { get; set; }
+    }
+
+    private async Task OnAdditionalFilesUpload(InputFileChangeEventArgs e)
+    {
+        foreach (var file in e.GetMultipleFiles())
+        {
+            using var ms = new MemoryStream();
+            await file.OpenReadStream().CopyToAsync(ms);
+            emailModel.FileAttachments.Add(new FileData
+                {
+                    FileName = file.Name,
+                    Data = ms.ToArray()
+                });
+            Console.WriteLine($"File {file.Name} processed and stored as byte array.");
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+    private void RemoveFile(FileData file)
+    {
+        emailModel.FileAttachments.Remove(file);
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task TogglePreview()
+    {
+        if (!isPreviewVisible)
+        {
+            await PreviewEmailTemplate();
+        }
+        isPreviewVisible = !isPreviewVisible;
+        StateHasChanged();
+    }
+
+    private string WrapPreviewHtml(string body)
+    {
+        string formattedBody = body.Replace("\n", "<br>");
+        return $@"
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset=""UTF-8"">
+    <meta name=""viewport"" content=""width=device-width, initial-scale=1.0"">
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #fff; }}
+        p {{ color: #555555; line-height: 1.6; margin: 0 0 10px; }}
+        h2 {{ color: #333333; margin: 0 0 10px; }}
+        table {{ max-width: 600px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e0e0e0; }}
+        td {{ padding: 20px; }}
+        .header {{ background-color: #2f4f4f; text-align: left; }}
+        .header img {{ max-width: 50px; display: block; }}
+        .header span {{ color: #ffffff; font-size: 20px; font-weight: bold; margin-left: 5px; vertical-align: middle; }}
+        .footer {{ padding: 10px; text-align: center; background-color: #2f4f4f; color: #ffffff; font-size: 12px; }}
+        a {{ color: #2f4f4f; }}
+        .attachment-table {{ margin: 20px 0; background-color: #f9f9f9; border: 1px solid #e0e0e0; }}
+        .attachment-table td {{ text-align: center; }}
+        .attachment-text {{ display: inline-block; padding: 10px 20px; background-color: #2f4f4f; color: #ffffff; border-radius: 5px; }}
+    </style>
+</head>
+<body>
+    <table width=""100%"">
+        <tr>
+            <td class=""header"">
+                <table cellpadding=""0"" cellspacing=""0"">
+                    <tr>
+                        <td style=""vertical-align: middle; padding: 0;"">
+                            <img src=""https://via.placeholder.com/50"" alt=""Atrule Technologies LLC"" />
+                        </td>
+                        <td style=""vertical-align: middle; padding: 0;"">
+                            <span>Atrule Technologies LLC</span>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+        <tr>
+            <td>{formattedBody}</td>
+        </tr>
+        <tr>
+            <td class=""footer"">
+                Atrule Technologies | 2nd Floor, Khawar Center, SP Chowk, Multan, Pakistan<br>
+                Email: <a href=""mailto:suleman@atrule.com"">suleman@atrule.com</a> | Web: <a href=""https://atrule.com"">atrule.com</a> | Phone: +92-313-6120356
+            </td>
+        </tr>
+    </table>
+</body>
+</html>";
+    }
+
+    private async Task PreviewEmailTemplate()
+    {
+        var invoice = AllInvoices.FirstOrDefault(i => i.InvoiceId == modalInvoiceId);
+        if (invoice == null) return;
+
+        int invoiceNumber = invoice.Client.InvoiceSeriesStart + invoice.InvoiceId;
+        string paddedInvoiceNumber = invoiceNumber.ToString("D6");
+        string formattedInvoiceNumber = $"INV/{invoice.DueDate?.Year ?? DateTime.Now.Year}/{paddedInvoiceNumber}";
+        previewBody = emailModel.CustomTemplate
+            .Replace("{ClientName}", invoice.Client?.Name ?? "Valued Client")
+            .Replace("{InvoiceNumber}", formattedInvoiceNumber)
+            .Replace("{DueDate}", invoice.DueDate?.ToString("MMMM dd, yyyy") ?? DateTime.Now.AddDays(5).ToString("MMMM dd, yyyy"));
+        StateHasChanged();
+    }
+
+
+
+
+    private async Task RefreshInvoices()
+    {
+        AllInvoices = (await InvoiceService.GetAllInvoicesAsync())
+            .OrderByDescending(i => i.InvoiceDate)
+            .ToList();
+        InvoicesQuery = AllInvoices.AsQueryable();
+    }
+
+    private void ShowCreateInvoiceModal()
+    {
+        ResetForm(); // Reset form first
+        isCreateInvoiceModalVisible = true;
+        isEditInvoiceModalVisible = false;
+        isUpdateModd = false;
+        StateHasChanged();
+    }
+
+    private void CancelCreateInvoice()
+    {
+        isCreateInvoiceModalVisible = false;
+        isEditInvoiceModalVisible = false;
+        ResetForm();
+    }
+
+    private void ResetForm()
+    {
+        SelectedClientId = 0;
+        selectedClientName = string.Empty;
+        SelectedOwnerProfileId = 0;
+        selectedOwnerProfileName = string.Empty;
+        SelectedEmployeeId = 0;
+        selectedEmployeeName = string.Empty;
+        SelectedResourceId = 0;
+        ConsumedHours = 0;
+        Rate = 0;
+        Amount = 0;
+        Variation = null;
+        SelectedOwnerCurrencyId = null;
+        PaymentGuidelineImage = null;
+        StartDate = null;
+        EndDate = null;
+        DueDate = null;
+        purposeCode = string.Empty;
+        TargetCurrencyConversionRate = 1m;
+        clientSearchQuery = string.Empty;
+        ownerProfileSearchQuery = string.Empty;
+        employeeSearchQuery = string.Empty;
+        currencySearchQuery = string.Empty;
+        ShowClientDropdown = false;
+        ShowOwnerProfileDropdown = false;
+        ShowEmployeeDropdown = false;
+        ShowCurrencyDropdown = false;
+        filteredClients = new List<Client>(Clients);
+        filteredOwnerProfiles = new List<OwnerProfile>(OwnerProfiles);
+        filteredEmployees = new List<Employee>(Employees);
+        filteredCurrencies = new List<CountryCurrency>(OwnerCurrencies);
+        AvailableResources.Clear();
+        editingInvoiceId = 0;
+        isEditInvoiceModalVisible = false;
+        isCreateInvoiceModalVisible = false;
+        SelectedBankAccountId = null;
+        SelectedBankAccountName = string.Empty;
+        bankAccountSearchQuery = string.Empty;
+        paymentCommunication = string.Empty;
+    }
+
+    private async Task FilterClients(ChangeEventArgs e)
+    {
+        clientSearchQuery = e.Value?.ToString() ?? string.Empty;
+        filteredClients = string.IsNullOrWhiteSpace(clientSearchQuery)
+            ? new List<Client>(Clients)
+            : Clients.Where(c => c.Name.Contains(clientSearchQuery, StringComparison.OrdinalIgnoreCase)).ToList();
+        ShowClientDropdown = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task FilterOwnerProfiles(ChangeEventArgs e)
+    {
+        ownerProfileSearchQuery = e.Value?.ToString() ?? string.Empty;
+        filteredOwnerProfiles = string.IsNullOrWhiteSpace(ownerProfileSearchQuery)
+            ? new List<OwnerProfile>(OwnerProfiles)
+            : OwnerProfiles.Where(op => op.OwnerName.Contains(ownerProfileSearchQuery, StringComparison.OrdinalIgnoreCase)).ToList();
+        ShowOwnerProfileDropdown = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task FilterEmployees(ChangeEventArgs e)
+    {
+        employeeSearchQuery = e.Value?.ToString() ?? string.Empty;
+        filteredEmployees = string.IsNullOrWhiteSpace(employeeSearchQuery)
+            ? new List<Employee>(Employees)
+            : Employees.Where(e => e.EmployeeName.Contains(employeeSearchQuery, StringComparison.OrdinalIgnoreCase)).ToList();
+        ShowEmployeeDropdown = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task FilterCurrencies(ChangeEventArgs e)
+    {
+        currencySearchQuery = e.Value?.ToString() ?? string.Empty;
+        filteredCurrencies = string.IsNullOrWhiteSpace(currencySearchQuery)
+            ? new List<CountryCurrency>(OwnerCurrencies)
+            : OwnerCurrencies.Where(c => c.CurrencyName.Contains(currencySearchQuery, StringComparison.OrdinalIgnoreCase) || c.Symbol.Contains(currencySearchQuery, StringComparison.OrdinalIgnoreCase)).ToList();
+        ShowCurrencyDropdown = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnClientSearchBlur()
+    {
+        await Task.Delay(200);
+        ShowClientDropdown = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnOwnerProfileSearchBlur()
+    {
+        await Task.Delay(200);
+        ShowOwnerProfileDropdown = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnEmployeeSearchBlur()
+    {
+        await Task.Delay(200);
+        ShowEmployeeDropdown = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnCurrencySearchBlur()
+    {
+        await Task.Delay(200);
+        ShowCurrencyDropdown = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void SelectClient(int clientId, string clientName, string symbol)
+    {
+        SelectedClientId = clientId;
+        selectedClientName = clientName;
+        clientSearchQuery = clientName + " " + symbol;
+        ShowClientDropdown = false;
+        clientCurrencySymbol = symbol;
+        StateHasChanged();
+    }
+
+    private void SelectOwnerProfile(int ownerProfileId, string ownerProfileName, string symbol)
+    {
+        targetCurrencyConversion = false;
+        SelectedOwnerProfileId = ownerProfileId;
+        selectedOwnerProfileName = ownerProfileName;
+        ownerProfileSearchQuery = ownerProfileName + " " + symbol;
+        ownerCurrencySymbol = symbol;
+        ShowOwnerProfileDropdown = false;
+
+        // Reset previous bank account selection
+        SelectedBankAccountId = 0;
+        bankAccountSearchQuery = string.Empty;
+
+        if (!clientCurrencySymbol.Equals(symbol))
+            targetCurrencyConversion = true;
+        // Load bank accounts for this owner
+        filteredBankAccounts = OwnerProfiles.Where(op => op.Id == SelectedOwnerProfileId).SelectMany(op => op.BankAccounts).Where(op => op.OwnerProfileId == ownerProfileId).ToList();
+        StateHasChanged();
+    }
+
+    private void SelectEmployee(int employeeId, string employeeName)
+    {
+        SelectedEmployeeId = employeeId;
+        selectedEmployeeName = employeeName;
+        employeeSearchQuery = employeeName;
+        ShowEmployeeDropdown = false;
+    }
+
+    private void SelectCurrency(int? currencyId, string displayText, string symbol)
+    {
+        targetCurrencyConversion = false;
+
+        if (displayText.Equals("Default (Owner's Currency)"))
+        {
+            if (!clientCurrencySymbol.Equals(ownerCurrencySymbol))
+                targetCurrencyConversion = true;
+            else
+                targetCurrencyConversion = false;
+        }
+        else if (!clientCurrencySymbol.Equals(symbol))
+            targetCurrencyConversion = true;
+
+        SelectedOwnerCurrencyId = currencyId;
+        currencySearchQuery = displayText;
+        ShowCurrencyDropdown = false;
+        StateHasChanged();
+    }
+
+    private void OnVariationChanged(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<InvoiceItem.ContractVariation>(e.Value?.ToString(), out var newVariation))
+        {
+            Variation = newVariation;
+            if (Variation == InvoiceItem.ContractVariation.Fixed)
+            {
+                ConsumedHours = 0;
+                Rate = 0;
+            }
+            else if (Variation == InvoiceItem.ContractVariation.Hourly)
+            {
+                Amount = 0;
+            }
+            StateHasChanged();
+        }
+    } 
+
+    private async Task OnImageUpload(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            var file = e.File;
+            if (file != null && file.Size > 0)
+            {
+                using var ms = new MemoryStream();
+                await file.OpenReadStream().CopyToAsync(ms);
+                PaymentGuidelineImage = ms.ToArray();
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error uploading image: {ex.Message}");
+            ToastService.Notify("error", "Error uploading image.");
+        }
+    }
+
+    private async Task OnClientChanged()
+    {
+        Console.WriteLine($"OnClientChanged: SelectedClientId = {SelectedClientId}");
+        SelectedOwnerProfileId = 0;
+        selectedOwnerProfileName = string.Empty;
+        ownerProfileSearchQuery = string.Empty;
+        SelectedEmployeeId = 0;
+        selectedEmployeeName = string.Empty;
+        employeeSearchQuery = string.Empty;
+        SelectedResourceId = 0;
+        ConsumedHours = 0;
+        Rate = 0;
+        Amount = 0;
+        Variation = null;
+        AvailableResources.Clear();
+
+        if (SelectedClientId <= 0)
+        {
+            Console.WriteLine("No valid client selected, skipping resource load.");
+            filteredOwnerProfiles = new List<OwnerProfile>(OwnerProfiles);
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        try
+        {
+            var resources = await ResourceRepository.GetByClientIdAsync(SelectedClientId);
+            Console.WriteLine($"Resources for Client {SelectedClientId}: {resources.Count()}");
+
+            AvailableResources = resources
+                .Where(r => r.IsActive)
+                .ToList();
+            Console.WriteLine($"Filtered Available Resources: {AvailableResources.Count}");
+
+            filteredOwnerProfiles = new List<OwnerProfile>(OwnerProfiles);
+
+            if (AvailableResources.Count == 0)
+            {
+                Console.WriteLine("No active resources found. Checking reasons:");
+                Console.WriteLine($" - Total resources before filtering: {resources.Count()}");
+                Console.WriteLine($" - Inactive resources: {resources.Count(r => !r.IsActive)}");
+                ToastService.Notify("warning", "No active resources found for the selected client. Please create a resource first.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in OnClientChanged: {ex.Message}\nStackTrace: {ex.StackTrace}");
+            ToastService.Notify("error", $"Error loading resources: {ex.Message}");
+            filteredOwnerProfiles = new List<OwnerProfile>(OwnerProfiles);
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnOwnerProfileChanged()
+    {
+        currencySearchQuery = "";
+        SelectedOwnerCurrencyId = null;
+        if (SelectedClientId <= 0 || SelectedOwnerProfileId <= 0)
+        {
+            return;
+        }
+
+        try
+        {
+            var resource = AvailableResources.FirstOrDefault(r => r.ClientId == SelectedClientId);
+            if (resource != null)
+            {
+                resource.OwnerProfileId = SelectedOwnerProfileId;
+                await ResourceRepository.UpdateAsync(resource);
+                Console.WriteLine($"Updated Resource {resource.ResourceId} with OwnerProfileId {SelectedOwnerProfileId}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in OnOwnerProfileChanged: {ex.Message}\nStackTrace: {ex.StackTrace}");
+            ToastService.Notify("error", $"Error updating owner profile association: {ex.Message}");
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnEmployeeChanged()
+    {
+        if (SelectedClientId <= 0 || SelectedEmployeeId <= 0)
+        {
+            return;
+        }
+
+        try
+        {
+            var resources = await ResourceRepository.GetByClientIdAsync(SelectedClientId);
+            AvailableResources = resources
+                .Where(r => r.IsActive && r.EmployeeId == SelectedEmployeeId)
+                .ToList();
+
+            if (AvailableResources.Count == 0)
+            {
+                ToastService.Notify("warning", "No active resources found for the selected employee and client.");
+                SelectedResourceId = 0;
+            }
+            else
+            {
+                if (!isUpdateModd)
+                {
+                    SelectedResourceId = AvailableResources.First().ResourceId;
+                    selectedEmployeeName = Employees.FirstOrDefault(e => e.EmployeeId == SelectedEmployeeId)?.EmployeeName ?? string.Empty;
+                    employeeSearchQuery = selectedEmployeeName;
+                }
+
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in OnEmployeeChanged: {ex.Message}\nStackTrace: {ex.StackTrace}");
+            ToastService.Notify("error", $"Error updating employee association: {ex.Message}");
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnDateFilterChanged()
+    {
+        SelectedEmployeeId = 0;
+        selectedEmployeeName = string.Empty;
+        employeeSearchQuery = string.Empty;
+        filteredEmployees = new List<Employee>(Employees);
+        SelectedResourceId = 0;
+        ConsumedHours = 0;
+        Rate = 0;
+        Amount = 0;
+        Variation = null;
+        AvailableResources.Clear();
+
+        if (SelectedClientId <= 0)
+        {
+            return;
+        }
+
+        try
+        {
+            var resources = await ResourceRepository.GetByClientIdAsync(SelectedClientId);
+            AvailableResources = resources
+                .Where(r => r.IsActive)
+                .ToList();
+
+            if (AvailableResources.Count == 0)
+            {
+                ToastService.Notify("warning", "No active resources found for the selected client.");
+            }
+            else
+            {
+                var firstResource = AvailableResources.FirstOrDefault();
+                if (firstResource != null)
+                {
+                    SelectedEmployeeId = firstResource.EmployeeId;
+                    selectedEmployeeName = firstResource.Employee?.EmployeeName ?? string.Empty;
+                    employeeSearchQuery = selectedEmployeeName;
+
+                    SelectedOwnerProfileId = firstResource.OwnerProfileId;
+                    selectedOwnerProfileName = firstResource.OwnerProfile?.OwnerName ?? string.Empty;
+                    ownerProfileSearchQuery = selectedOwnerProfileName;
+                }
+
+                filteredOwnerProfiles = new List<OwnerProfile>(OwnerProfiles);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in OnDateFilterChanged: {ex.Message}\nStackTrace: {ex.StackTrace}");
+            ToastService.Notify("error", $"Error loading resources: {ex.Message}");
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task GenerateInvoice()
+    {
+        if (SelectedClientId <= 0) { ToastService.Notify("error", "Please select a client."); return; }
+        if (SelectedOwnerProfileId <= 0) { ToastService.Notify("error", "Please select an owner profile."); return; }
+        if (SelectedResourceId <= 0) { ToastService.Notify("error", "Please select a resource."); return; }
+        if (!DueDate.HasValue) { ToastService.Notify("error", "Please select a due date."); return; }
+        if (string.IsNullOrWhiteSpace(purposeCode)) { ToastService.Notify("error", "Please enter a purpose code."); return; }
+        if (!Variation.HasValue) { ToastService.Notify("error", "Please select a variation type."); return; }
+        if (SelectedBankAccountId <= 0) { ToastService.Notify("error", "Select a bank account or add a new one for this owner."); return; }
+
+        if (Variation == InvoiceItem.ContractVariation.Hourly && ConsumedHours <= 0) { ToastService.Notify("error", "Consumed Hours must be greater than 0 for Hourly variation."); return; }
+        if (Variation == InvoiceItem.ContractVariation.Hourly && Rate <= 0) { ToastService.Notify("error", "Rate must be greater than 0 for Hourly variation."); return; }
+        if (Variation == InvoiceItem.ContractVariation.Fixed && Amount <= 0) { ToastService.Notify("error", "Amount must be greater than 0 for Fixed variation."); return; }
+
+        try
+        {
+            decimal totalAmount = Variation == InvoiceItem.ContractVariation.Hourly ? (ConsumedHours * Rate) * TargetCurrencyConversionRate : Amount * TargetCurrencyConversionRate;
+
+            int invoiceId = await InvoiceService.SaveInvoiceAsync(
+                clientId: SelectedClientId,
+                resourceId: SelectedResourceId,
+                consumedHours: ConsumedHours,
+                rate: Rate,
+                amount: totalAmount,
+                variation: Variation.Value,
+                startDate: StartDate,
+                endDate: EndDate,
+                dueDate: DueDate,
+                purposeCode: purposeCode,
+                conversionRate: TargetCurrencyConversionRate,
+                paymentGuidelineImage: PaymentGuidelineImage,
+                ownerCurrencyId: SelectedOwnerCurrencyId,
+                bankAccountId: SelectedBankAccountId.Value,
+                Payment_Communication: paymentCommunication);
+
+            ToastService.Notify("success", $"Invoice {invoiceId} generated successfully!");
+            isCreateInvoiceModalVisible = false;
+            ResetForm();
+            await RefreshInvoices();
+            await LoadInvoices();
+            await FilterInvoices();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error generating invoice: {ex.Message}");
+            ToastService.Notify("error", $"Error generating invoice: {ex.Message}");
+        }
+    }
+
+    private async Task LoadInvoices()
+    {
+        try
+        {
+            var (pagedData, totalItems, totalPagesResult) = await PaginationService.GetPagedDataAsync(InvoicesQuery, currentPage);
+            pagedInvoices = pagedData;
+            totalCount = totalItems;
+            totalPages = totalPagesResult;
+            currentPage = Math.Min(currentPage, totalPages > 0 ? totalPages : 1);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in LoadInvoices: {ex.Message}\nStackTrace: {ex.StackTrace}");
+            ToastService.Notify("error", $"Error loading invoices: {ex.Message}");
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task FilterInvoices()
+    {
+        InvoicesQuery = AllInvoices.AsQueryable();
+
+        if (!string.IsNullOrWhiteSpace(searchQuery))
+        {
+            var normalizedSearchQuery = searchQuery.Trim().ToLower();
+
+            InvoicesQuery = InvoicesQuery.Where(i =>
+                (i.Client != null && i.Client.Name != null && i.Client.Name.Contains(searchQuery, StringComparison.OrdinalIgnoreCase)) ||
+
+                  // Normalize invoice number and search query to ignore leading zeros
+                  ($"INV/{i.InvoiceDate.Year}/{(i.Client != null ? (i.Client.InvoiceSeriesStart + i.InvoiceId).ToString("D6") : "")}")
+            .ToLower()
+            .Contains(normalizedSearchQuery) ||
+
+                i.InvoiceDate.ToString("MM/dd/yyyy").Contains(searchQuery, StringComparison.OrdinalIgnoreCase) ||
+                i.TotalAmount.ToString().Contains(searchQuery, StringComparison.OrdinalIgnoreCase) ||
+                (i.Client != null && i.Client.CountryCurrency != null &&
+                 i.Client.CountryCurrency.CurrencyName != null &&
+                 i.Client.CountryCurrency.CurrencyName.Contains(searchQuery, StringComparison.OrdinalIgnoreCase)) ||
+                i.InvoiceStatuses.ToString().Contains(searchQuery, StringComparison.OrdinalIgnoreCase) ||
+                i.EmailStatus.Contains(searchQuery, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (!string.IsNullOrWhiteSpace(SelectedStatus))
+        {
+            if (Enum.TryParse<InvoiceStatus>(SelectedStatus, out var status))
+            {
+                InvoicesQuery = InvoicesQuery.Where(i => i.InvoiceStatuses == status);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(SelectedEmailStatus))
+        {
+            InvoicesQuery = InvoicesQuery.Where(i => i.EmailStatus == SelectedEmailStatus);
+        }
+
+        // ✅ Apply date range filter if dates are selected
+        if (fromDate.HasValue)
+        {
+            InvoicesQuery = InvoicesQuery.Where(i => i.InvoiceDate.Date >= fromDate.Value.Date);
+        }
+
+        if (toDate.HasValue)
+        {
+            InvoicesQuery = InvoicesQuery.Where(i => i.InvoiceDate.Date <= toDate.Value.Date);
+        }
+
+        InvoicesQuery = InvoicesQuery.OrderByDescending(i => i.InvoiceDate);
+        // Apply sorting
+        await ApplySorting();
+        currentPage = 1;
+        await LoadInvoices();
+    }
+    private async Task OnFromDateChanged(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(e.Value?.ToString(), out var newDate))
+        {
+            fromDate = newDate;
+        }
+        else
+        {
+            fromDate = null;
+        }
+        await FilterInvoices();
+    }
+
+    private async Task OnToDateChanged(ChangeEventArgs e)
+    {
+        if (DateTime.TryParse(e.Value?.ToString(), out var newDate))
+        {
+            toDate = newDate;
+        }
+        else
+        {
+            toDate = null;
+        }
+        await FilterInvoices();
+    }
+    private async Task GetInvoiceByStatus(ChangeEventArgs e)
+    {
+        SelectedStatus = e.Value?.ToString() ?? string.Empty;
+        await FilterInvoices();
+    }
+
+    private async Task GetInvoiceByEmailStatus(ChangeEventArgs e)
+    {
+        SelectedEmailStatus = e.Value?.ToString() ?? string.Empty;
+        await FilterInvoices();
+    }
+
+    private async Task PreviousPage()
+    {
+        if (CanGoPrevious)
+        {
+            currentPage--;
+            await LoadInvoices();
+        }
+    }
+
+    private async Task NextPage()
+    {
+        if (CanGoNext)
+        {
+            currentPage++;
+            await LoadInvoices();
+        }
+    }
+
+    private async Task ChangePage(int page)
+    {
+        currentPage = page;
+        await LoadInvoices();
+    }
+
+    private async Task SetPageSize(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int newPageSize))
+        {
+            pageSize = newPageSize;
+            selectedPageSize = newPageSize;
+            PaginationService.SetPageSize(pageSize);
+            currentPage = 1;
+            await LoadInvoices();
+        }
+    }
+
+    private async Task PreviewInvoiceAndReceipt(Invoice invoice, bool isReceipt = false)
+    {
+        string blobUrl = null;
+        try
+        {
+            byte[] pdfData = await InvoiceService.GenerateInvoicePdfAsync(invoice.InvoiceId, isReceipt);
+            if (pdfData == null || pdfData.Length == 0)
+            {
+                ToastService.Notify("error", $"Failed to generate {(isReceipt ? "receipt" : "invoice")} preview: PDF is empty.");
+                return;
+            }
+
+            blobUrl = await JS.InvokeAsync<string>("createBlobUrl", pdfData, "application/pdf");
+            await JS.InvokeVoidAsync("window.open", blobUrl, "_blank");
+
+            ToastService.Notify("success", $"{(isReceipt ? "Receipt" : "Invoice")} {invoice.InvoiceId} preview opened successfully!");
+
+            // Optional: Refresh data if needed
+            await Task.WhenAll(
+                RefreshInvoices(),
+                LoadInvoices(),
+                FilterInvoices()
+            );
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error previewing invoice: {ex.Message}\nStackTrace: {ex.StackTrace}");
+            ToastService.Notify("error", $"Error previewing invoice: {ex.Message}");
+        }
+        finally
+        {
+            // Ensure Blob URL cleanup
+            if (blobUrl != null)
+            {
+                try
+                {
+                    await JS.InvokeVoidAsync("revokeBlobUrl", blobUrl);
+                }
+                catch (Exception cleanupEx)
+                {
+                    Console.WriteLine($"Failed to revoke Blob URL: {cleanupEx.Message}");
+                }
+            }
+        }
+    }
+
+    private async Task DownloadInvoiceAndReceipt(Invoice invoice, bool isReceipt = false)
+    {
+        try
+        {
+            byte[] pdfData = await InvoiceService.GenerateInvoicePdfAsync(invoice.InvoiceId, isReceipt);
+
+            var fileName = isReceipt ? $"Receipt_{invoice.InvoiceId}.pdf" : $"Invoice_{invoice.InvoiceId}.pdf";
+
+            await JS.InvokeVoidAsync(
+                "downloadFileFromStream",
+                fileName,
+                new DotNetStreamReference(new MemoryStream(pdfData)),
+                "application/pdf"
+            );
+
+            ToastService.Notify("success",$"{(isReceipt ? "Receipt" : "Invoice")} {invoice.InvoiceId} downloaded successfully!");
+
+            await Task.WhenAll(
+                RefreshInvoices(),
+                LoadInvoices(),
+                FilterInvoices()
+            );
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error downloading {(isReceipt ? "receipt" : "invoice")}: {ex.Message}\nStackTrace: {ex.StackTrace}");
+            ToastService.Notify("error", $"Error downloading {(isReceipt ? "receipt" : "invoice")}: {ex.Message}");
+        }
+    }
+
+    public async Task ShowSendEmailModal(int invoiceId, string? clientName, bool receipt = false)
+    {
+        try
+        {
+            modalInvoiceId = invoiceId;
+            modalClientName = clientName ?? string.Empty; // Better than "Unknown"
+
+            if (receipt)
+            {
+                isEmailModalVisibleForReceipt = true;
+                isSendEmailModalVisible = false;
+            }
+            else
+            {
+                isSendEmailModalVisible = true;
+                isEmailModalVisibleForReceipt = false;
+            }
+
+            // Ensure UI updates
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            // Log error or show user notification
+            Console.WriteLine($"Error sending email: {ex.Message}\nStackTrace: {ex.StackTrace}");
+        }
+    }
+
+    private async Task ConfirmSendEmails()
+    {
+        if (isSendEmailModalVisible)
+        {
+            isEmailSending = true;
+            await InvokeAsync(StateHasChanged);
+
+            try
+            {
+                bool emailSent = await InvoiceService.SendInvoiceToClientAsync(modalInvoiceId, null, true, null, true);
+                if (emailSent)
+                {
+                    ToastService.Notify("success", $"Email sent successfully for invoice {modalInvoiceId}!");
+                    await RefreshInvoices();
+                    await LoadInvoices();
+                    await FilterInvoices();
+                }
+                else
+                {
+                    ToastService.Notify("error", "Failed to send email.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error sending email: {ex.Message}\nStackTrace: {ex.StackTrace}");
+                ToastService.Notify("error", $"Error sending email: {ex.Message}");
+            }
+            finally
+            {
+                isEmailSending = false;
+                isSendEmailModalVisible = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        else
+        {
+            if (!emailModel.IncludeInvoice && !emailModel.IncludeAdditionalFiles)
+            {
+                ToastService.Notify("error", "Please include at least the invoice or additional files to send the email.");
+                return;
+            }
+
+            isEmailSending = true;
+            isPreviewVisible = false; // Close preview modal when sending
+            await InvokeAsync(StateHasChanged);
+
+            try
+            {
+                var invoice = AllInvoices.FirstOrDefault(i => i.InvoiceId == modalInvoiceId);
+                if (invoice == null) throw new Exception("Invoice not found!");
+
+                List<byte[]> additionalAttachments = emailModel.FileAttachments.Select(f => f.Data).ToList();
+
+                // Pass includeInvoice parameter to control invoice attachment
+                bool emailSent = await InvoiceService.SendInvoiceToClientAsync(
+                    modalInvoiceId,
+                    emailModel.CustomTemplate,
+                    emailModel.IncludeInvoice,
+                    additionalAttachments
+                );
+                if (emailSent)
+                {
+                    ToastService.Notify("success", $"Email sent successfully for invoice {modalInvoiceId}!");
+                    await RefreshInvoices();
+                    await LoadInvoices();
+                    await FilterInvoices();
+                }
+                else
+                {
+                    ToastService.Notify("error", "Failed to send email.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error sending email: {ex.Message}\nStackTrace: {ex.StackTrace}");
+                ToastService.Notify("error", $"Error sending email: {ex.Message}");
+            }
+            finally
+            {
+                isEmailSending = false;
+                isSendEmailModalVisible = false;
+                emailModel = new EmailModel();
+                previewBody = string.Empty;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+
+
+    }
+
+    private async Task ConfirmSendEmail()
+    {
+        // Validate at least one attachment is selected for non-modal case
+        if (!isSendEmailModalVisible && !isEmailModalVisibleForReceipt &&
+            !emailModel.IncludeInvoice && !emailModel.IncludeAdditionalFiles)
+        {
+            ToastService.Notify("error", "Please include at least the document or additional files to send the email.");
+            return;
+        }
+
+        isEmailSending = true;
+        isPreviewVisible = false; // Close preview modal when sending
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var isReceipt = isEmailModalVisibleForReceipt;
+            var documentType = isReceipt ? "receipt" : "invoice";
+
+            // For simple modal case (no customizations)
+            if (isSendEmailModalVisible || isEmailModalVisibleForReceipt)
+            {
+                bool emailSents = await InvoiceService.SendInvoiceToClientAsync(
+                    modalInvoiceId,
+                    null,  // no custom template
+                    true, // always include document
+                    null, // no additional files
+                    isReceipt
+                );
+
+                await HandleEmailResult(emailSents, documentType);
+                return;
+            }
+
+            // For advanced case with customizations
+            var invoice = AllInvoices.FirstOrDefault(i => i.InvoiceId == modalInvoiceId)
+                ?? throw new Exception($"{documentType} not found!");
+
+            List<byte[]> additionalAttachments = emailModel.FileAttachments?
+                .Select(f => f.Data)
+                .ToList();
+
+            bool emailSent = await InvoiceService.SendInvoiceToClientAsync(
+                modalInvoiceId,
+                emailModel.CustomTemplate,
+                emailModel.IncludeInvoice,
+                additionalAttachments,
+                isReceipt
+            );
+
+            await HandleEmailResult(emailSent, documentType);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error sending email: {ex.Message}\nStackTrace: {ex.StackTrace}");
+            ToastService.Notify("error", $"Error sending email: {ex.Message}");
+        }
+        finally
+        {
+            isEmailSending = false;
+            isSendEmailModalVisible = false;
+            isEmailModalVisibleForReceipt = false;
+            emailModel = new EmailModel();
+            previewBody = string.Empty;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task HandleEmailResult(bool success, string documentType)
+    {
+        if (success)
+        {
+            ToastService.Notify("success", $"Email sent successfully for {documentType} {modalInvoiceId}!");
+            await Task.WhenAll(
+                RefreshInvoices(),
+                LoadInvoices(),
+                FilterInvoices()
+            );
+        }
+        else
+        {
+            ToastService.Notify("error", $"Failed to send {documentType} email.");
+        }
+    }
+
+    private void CancelSendEmail()
+    {
+        if (isEmailModalVisibleForReceipt)
+            isEmailModalVisibleForReceipt = false;
+        else
+            isSendEmailModalVisible = false;
+    }
+
+    private void ShowMarkAsPaidModal(int invoiceId, string? clientName)
+    {
+        modalInvoiceId = invoiceId;
+        modalClientName = clientName ?? "Unknown";
+        isMarkAsPaidModalVisible = true;
+    }
+
+    private async Task ConfirmMarkAsPaid()
+    {
+        try
+        {
+            var invoice = await InvoiceService.GetInvoiceById(modalInvoiceId);
+            var receipt = new Receipt
+                {
+                    ClientId = invoice.Client.ClientId,
+                    Invoice_Generated_Date = invoice.InvoiceDate,
+                    TotalAmount = Convert.ToDouble(invoice.TotalAmount),
+                    CurrencyId = invoice.CountryCurrencyId,
+                    Invoice_paid_Date = DateTime.Now,
+                    Status = "InTime"
+                };
+            await ReceiptRepository.AddAsync(receipt);
+
+            await InvoiceService.MarkInvoiceAsPaidAsync(modalInvoiceId);
+            ToastService.Notify("success", $"Invoice {modalInvoiceId} marked as paid!");
+            await RefreshInvoices();
+            await LoadInvoices();
+            await FilterInvoices();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error marking invoice as paid: {ex.Message}\nStackTrace: {ex.StackTrace}");
+            ToastService.Notify("error", $"Error marking invoice as paid: {ex.Message}");
+        }
+
+        isMarkAsPaidModalVisible = false;
+    }
+
+    private async Task ShowEditInvoiceModal(Invoice invoice)
+    {
+        try
+        {
+            // Set the editing mode
+            isEditInvoiceModalVisible = true;
+            isCreateInvoiceModalVisible = false;
+            editingInvoiceId = invoice.InvoiceId;
+
+            // Load the invoice details
+            var invoiceToEdit = await InvoiceService.GetInvoiceById(invoice.InvoiceId);
+            if (invoiceToEdit == null)
+            {
+                ToastService.Notify("error", "Invoice not found");
+                return;
+            }
+            var resource = invoiceToEdit.InvoiceItems.FirstOrDefault()?.Resource;
+            var ownerProfile = resource?.OwnerProfile;
+
+            // Populate the form fields
+            SelectedClientId = invoiceToEdit.ClientId;
+            selectedClientName = invoiceToEdit.Client?.Name ?? string.Empty;
+            clientSearchQuery = selectedClientName + " " + invoiceToEdit.Client?.CountryCurrency.Symbol;
+            clientCurrencySymbol = invoiceToEdit.Client?.CountryCurrency.Symbol;
+
+            SelectedOwnerProfileId = ownerProfile?.Id ?? 0;
+            selectedOwnerProfileName = ownerProfile?.OwnerName ?? string.Empty;
+            ownerProfileSearchQuery = selectedOwnerProfileName + " " + ownerProfile?.CountryCurrency.Symbol;
+            ownerCurrencySymbol = ownerProfile?.CountryCurrency.Symbol;
+
+            var firstItem = invoiceToEdit.InvoiceItems.FirstOrDefault();
+            if (firstItem != null)
+            {
+                Variation = firstItem.Variation;
+                if (Variation == InvoiceItem.ContractVariation.Hourly)
+                {
+                    ConsumedHours = firstItem.ConsumedHours.Value;
+                    Rate = firstItem.RatePerHour.Value;
+                }
+                else
+                {
+                    Amount = firstItem.TotalAmount.Value;
+                }
+            }
+
+            
+            DueDate = invoiceToEdit.DueDate;
+            purposeCode = invoiceToEdit.InvoiceItems.FirstOrDefault()?.PurposeCode ?? string.Empty;
+            TargetCurrencyConversionRate = invoiceToEdit.TargetCurrencyConversionRate;
+            PaymentGuidelineImage = invoiceToEdit.PaymentGuidelineImage;
+            SelectedOwnerCurrencyId = invoiceToEdit.CountryCurrencyId;
+            paymentCommunication = invoiceToEdit.Payment_Communication;
+            currencySearchQuery = invoiceToEdit.CountryCurrency.CountryName + invoiceToEdit.CountryCurrency.Symbol;
+
+            // Load the resource to get employee info
+            // var resource = await ResourceRepository.GetByIdAsync(invoiceToEdit.ResourceId);
+            if (resource != null)
+            {
+                isUpdateModd = true;
+                SelectedEmployeeId = resource.EmployeeId;
+                selectedEmployeeName = resource.Employee?.EmployeeName ?? string.Empty;
+                employeeSearchQuery = selectedEmployeeName;
+            }
+
+            // Load bank accounts for the owner
+            if (SelectedOwnerProfileId > 0)
+            {
+                filteredBankAccounts = OwnerProfiles
+                    .Where(op => op.Id == SelectedOwnerProfileId)
+                    .SelectMany(op => op.BankAccounts)
+                    .ToList();
+
+                // Set the selected bank account if one exists
+                if (invoiceToEdit.BankAccountId > 0)
+                {
+                    SelectedBankAccountId = invoiceToEdit.BankAccountId;
+                    var bankAccount = filteredBankAccounts.FirstOrDefault(ba => ba.Id == invoiceToEdit.BankAccountId);
+                    if (bankAccount != null)
+                    {
+                        SelectedBankAccountName = bankAccount.Label;
+                        bankAccountSearchQuery = $"{bankAccount.Label} ({bankAccount.BankName} - {bankAccount.AccountNumber})";
+                    }
+                }
+            }
+
+            // Load available resources for the client
+            if (SelectedClientId > 0)
+            {
+                var resources = await ResourceRepository.GetByClientIdAsync(SelectedClientId);
+                AvailableResources = resources.Where(r => r.IsActive && r.EmployeeId == SelectedEmployeeId).ToList();
+            }
+            SelectedResourceId = resource.ResourceId;
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error loading invoice for editing: {ex.Message}\nStackTrace: {ex.StackTrace}");
+            ToastService.Notify("error", $"Error loading invoice: {ex.Message}");
+        }
+    }
+
+    private async Task UpdateInvoice()
+    {
+        if (editingInvoiceId <= 0)
+        {
+            ToastService.Notify("error", "No invoice selected for editing");
+            return;
+        }
+
+        // Same validation as GenerateInvoice
+        if (SelectedClientId <= 0) { ToastService.Notify("error", "Please select a client."); return; }
+        if (SelectedOwnerProfileId <= 0) { ToastService.Notify("error", "Please select an owner profile."); return; }
+        if (SelectedResourceId <= 0) { ToastService.Notify("error", "Please select a resource."); return; }
+        if (!DueDate.HasValue) { ToastService.Notify("error", "Please select a due date."); return; }
+        if (string.IsNullOrWhiteSpace(purposeCode)) { ToastService.Notify("error", "Please enter a purpose code."); return; }
+        if (!Variation.HasValue) { ToastService.Notify("error", "Please select a variation type."); return; }
+        if (SelectedBankAccountId <= 0) { ToastService.Notify("error", "Select a bank account or add a new one for this owner."); return; }
+
+        if (Variation == InvoiceItem.ContractVariation.Hourly && ConsumedHours <= 0) { ToastService.Notify("error", "Consumed Hours must be greater than 0 for Hourly variation."); return; }
+        if (Variation == InvoiceItem.ContractVariation.Hourly && Rate <= 0) { ToastService.Notify("error", "Rate must be greater than 0 for Hourly variation."); return; }
+        if (Variation == InvoiceItem.ContractVariation.Fixed && Amount <= 0) { ToastService.Notify("error", "Amount must be greater than 0 for Fixed variation."); return; }
+
+        try
+        {
+            decimal totalAmount = Variation == InvoiceItem.ContractVariation.Hourly ?
+                (ConsumedHours * Rate) * TargetCurrencyConversionRate :
+                Amount * TargetCurrencyConversionRate;
+
+            bool updateSuccess = await InvoiceService.UpdateInvoiceAsync(
+                invoiceId: editingInvoiceId,
+                clientId: SelectedClientId,
+                resourceId: SelectedResourceId,
+                consumedHours: ConsumedHours,
+                rate: Rate,
+                amount: totalAmount,
+                variation: Variation.Value,
+                startDate: StartDate,
+                endDate: EndDate,
+                dueDate: DueDate,
+                purposeCode: purposeCode,
+                conversionRate: TargetCurrencyConversionRate,
+                paymentGuidelineImage: PaymentGuidelineImage,
+                ownerCurrencyId: SelectedOwnerCurrencyId,
+                bankAccountId: SelectedBankAccountId.Value,
+                Payment_Communication: paymentCommunication,
+                selectedOwnerProfileId: SelectedOwnerProfileId);
+
+            if (updateSuccess)
+            {
+                ToastService.Notify("success", $"Invoice {editingInvoiceId} updated successfully!");
+                isEditInvoiceModalVisible = false;
+                ResetForm();
+                await RefreshInvoices();
+                await LoadInvoices();
+                await FilterInvoices();
+            }
+            else
+            {
+                ToastService.Notify("error", "Failed to update invoice.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error updating invoice: {ex.Message}\nStackTrace: {ex.StackTrace}");
+            ToastService.Notify("error", $"Error updating invoice: {ex.Message}");
+        }
+    }
+
+    private void CancelMarkAsPaid()
+    {
+        isMarkAsPaidModalVisible = false;
+    }
+
+    private void ShowDeleteInvoiceModal(int invoiceId, string? clientName)
+    {
+        modalInvoiceId = invoiceId;
+        modalClientName = clientName ?? "Unknown";
+        isDeleteInvoiceModalVisible = true;
+    }
+
+    private async Task ConfirmDeleteInvoice()
+    {
+        try
+        {
+            await InvoiceService.DeleteInvoiceAsync(modalInvoiceId);
+            ToastService.Notify("success", $"Invoice {modalInvoiceId} deleted successfully!");
+            await RefreshInvoices();
+            await LoadInvoices();
+            await FilterInvoices();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error deleting invoice: {ex.Message}\nStackTrace: {ex.StackTrace}");
+            ToastService.Notify("error", $"Error deleting invoice: {ex.Message}");
+        }
+
+        isDeleteInvoiceModalVisible = false;
+    }
+
+    private void CancelDeleteInvoice()
+    {
+        isDeleteInvoiceModalVisible = false;
+    }
+
+    // Method to select a bank account
+    private void SelectBankAccount(int id, string name)
+    {
+        SelectedBankAccountId = id;
+        SelectedBankAccountName = name;
+        ShowBankAccountDropdown = false;
+        bankAccountSearchQuery = $"{name}";
+        StateHasChanged();
+    }
+
+    // Method to handle blur event
+    private void OnBankAccountSearchBlur()
+    {
+        // Small delay to allow click event to fire before closing
+        Task.Delay(200).ContinueWith(_ =>
+        {
+            InvokeAsync(() =>
+            {
+                ShowBankAccountDropdown = false;
+                StateHasChanged();
+            });
+        });
+    }
+
+    private async Task SortByColumn(string columnName)
+    {
+        if (sortColumn == columnName)
+        {
+            // Toggle sort direction if clicking the same column
+            sortAscending = !sortAscending;
+        }
+        else
+        {
+            // Set new column and default to ascending
+            sortColumn = columnName;
+            sortAscending = true;
+        }
+
+        await ApplySorting();
+        await LoadInvoices();
+    }
+
+    private async Task ApplySorting()
+    {
+        if (InvoicesQuery == null) return;
+
+        switch (sortColumn)
+        {
+            case "InvoiceNumber":
+                InvoicesQuery = sortAscending
+                    ? InvoicesQuery.OrderBy(i => i.Client.InvoiceSeriesStart + i.InvoiceId)
+                    : InvoicesQuery.OrderByDescending(i => i.Client.InvoiceSeriesStart + i.InvoiceId);
+                break;
+
+            case "InvoiceDate":
+                InvoicesQuery = sortAscending
+                    ? InvoicesQuery.OrderBy(i => i.InvoiceDate)
+                    : InvoicesQuery.OrderByDescending(i => i.InvoiceDate);
+                break;
+
+            default:
+                InvoicesQuery = InvoicesQuery.OrderByDescending(i => i.InvoiceDate);
+                break;
+        }
+    }
+}

@@ -1,0 +1,362 @@
+﻿@page "/resources"
+@rendermode InteractiveServer
+@using Client_Invoice_System.Helpers
+@using Client_Invoice_System.Models
+@using Client_Invoice_System.Repository
+@inject NavigationManager Navigation
+@inject ResourceRepository ResourceRepository
+@inject EmployeeRepository EmployeeRepository
+@inject ClientRepository ClientRepository
+@inject OwnerRepository OwnerProfileRepository
+@inject IPaginationService<Resource> PaginationService
+@inject ToastService ToastService
+@using Client_Invoice_System.Components
+@using Client_Invoice_System.Services
+
+<div class="d-flex align-items-center">
+    <Breadcrumb />
+</div>
+<div class="">
+    <!-- Page Header -->
+    <div class="row mb-3 align-items-center">
+        <div class="col-md-6">
+            <h3>Manage Contracts (@(ResourcesList?.Count ?? 0))</h3>
+        </div>
+    </div>
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <div class="input-group shadow rounded" style="max-width: 300px;">
+                <input type="text" class="form-control form-control-sm border-primary rounded-start" placeholder="🔍 Search..." @bind="searchQuery" @oninput="FilterResources" />
+                <button class="btn btn-primary fw-bold px-3" @onclick="FilterResources">
+                    <i class="bi bi-search"></i>
+                </button>
+            </div>
+        </div>
+        <div class="col-md-6 d-flex justify-content-end">
+            <button class="btn btn-primary w-30 w-md-auto" @onclick="NavigateToAddResource"><i class="bi bi-plus-circle me-1"></i>Add Contract</button>
+        </div>
+    </div>
+    <!-- Contract Table -->
+    <div class="card p-3 shadow-lg rounded-4 bg-white div-responsive">
+        @if (pagedResources != null && pagedResources.Any())
+        {
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th><i class="bi bi-person-fill"></i> Client</th>
+                            <th><i class="bi bi-box-seam"></i> Resource Name</th>
+                            <th><i class="bi bi-person-workspace"></i> Employee</th>
+                            <th><i class="bi bi-clock"></i> Committed Hours</th>
+                            @* <th><i class="bi bi-currency-dollar"></i> Rate</th> *@
+                            @* <th><i class="bi bi-list-check"></i> Variation</th> *@
+                            <th><i class="bi bi-calendar-week"></i> Recurrence</th>
+                            <th><i class="bi bi-person-badge"></i> Owner Profile</th>
+                            <th><i class="bi bi-bar-chart-line"></i> Contract Status</th>
+                            <th><i class="bi bi-gear"></i> Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var resource in pagedResources)
+                        {
+                            <tr>
+                                <td>@(resource.Client?.Name ?? "Unknown")</td>
+                                <td>@resource.ResourceName</td>
+                                <td>@(resource.Employee?.EmployeeName ?? "Unknown")</td>
+                                <td>@resource.CommittedHours</td>
+                                @* <td>@resource.Rate</td> *@
+                                @* <td>@resource.Variation</td> *@
+                                <td>@resource.Recurrence</td>
+                                <td>@(resource.OwnerProfile?.OwnerName ?? "Not Assigned")</td>
+                                <td>
+                                    <span class="badge @(resource.IsActive ? "bg-success" : "bg-danger")">
+                                        @(resource.IsActive ? "Active" : "Ended")
+                                    </span>
+                                </td>
+                                <td class="nowrap">
+                                    <button class="btn btn-sm btn-warning me-2" @onclick="() => NavigateToEditResource(resource.ResourceId)">
+                                        <i class="bi bi-pencil-square me-1"></i> Edit
+                                    </button>
+                                    <button class="btn btn-sm btn-danger me-2" @onclick="() => ShowDeleteModal(resource.ResourceId, resource.ResourceName)">
+                                        <i class="bi bi-trash me-1"></i> Delete
+                                    </button>
+                                    <button class="btn btn-sm btn-info" @onclick="() => ToggleContractStatus(resource)">
+                                        <i class="bi @(resource.IsActive ? "bi-x-circle" : "bi-check-circle") me-1"></i> @(resource.IsActive ? "End Contract" : "Activate")
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination Controls -->
+            <div class="d-flex align-items-center justify-content-center mt-3">
+                <ul class="pagination mb-0">
+                    <li class="page-item @(CanGoPrevious ? "" : "disabled")">
+                        <a class="page-link shadow-sm" href="javascript:void(0);" @onclick="PreviousPage">«</a>
+                    </li>
+                    @for (int i = 1; i <= totalPages; i++)
+                    {
+                        <li class="page-item @(i == currentPage ? "active" : "")">
+                            <a class="page-link fw-bold shadow-sm" href="javascript:void(0);" @onclick="() => ChangePage(i)">@i</a>
+                        </li>
+                    }
+                    <li class="page-item @(CanGoNext ? "" : "disabled")">
+                        <a class="page-link shadow-sm" href="javascript:void(0);" @onclick="NextPage">»</a>
+                    </li>
+                </ul>
+                <div class="d-flex align-items-center ms-3">
+                    <select class="form-select w-auto text-center shadow-sm border-primary" @onchange="SetPageSize">
+                        @foreach (var size in new int[] { 5, 10, 15, 20, 50, 100 })
+                        {
+                            <option value="@size" selected="@(size == pageSize)">Show @size</option>
+                        }
+                    </select>
+                </div>
+            </div>
+        }
+        else
+        {
+            <p class="text-center text-muted">No contracts found.</p>
+        }
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+@if (isDeleteModalVisible)
+{
+    <div class="modal-overlay">
+        <div class="delete-modal">
+            <p class="fw-bold">Are you sure you want to delete <span class="text-danger">@resourceToDeleteName</span>?</p>
+            <div class="d-flex flex-column flex-md-row justify-content-center gap-3">
+                <button class="btn btn-danger w-100 w-md-auto" @onclick="ConfirmDelete">
+                    <i class="bi bi-trash me-1"></i> Yes, Delete
+                </button>
+                <button class="btn btn-secondary w-100 w-md-auto" @onclick="CancelDelete">
+                    <i class="bi bi-x-circle me-1"></i> Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .table-responsive {
+        overflow-x: auto;
+        min-width: 100%;
+        display: block;
+        white-space: nowrap;
+        overflow-y: auto;
+        max-height: 70vh;
+    }
+
+    .div-responsive {
+        max-width: calc(100vw - 320px);
+    }
+
+    th, td {
+        min-width: 150px;
+    }
+
+        td.nowrap {
+            white-space: nowrap;
+        }
+
+    .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 1050;
+    }
+
+    .delete-modal {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+        text-align: center;
+        max-width: 400px;
+    }
+
+    tbody td {
+        text-align: center;
+        vertical-align: middle;
+    }
+
+    thead th {
+        text-align: center;
+    }
+</style>
+
+@code {
+    private List<Resource> ResourcesList = new();
+    private List<Resource> filteredResources = new();
+    private List<Resource> pagedResources = new();
+    private bool isDeleteModalVisible = false;
+    private int resourceToDelete;
+    private string resourceToDeleteName = "";
+    private int totalRecords;
+    private int totalPages;
+    private int currentPage = 1;
+    private int pageSize = 5;
+    private string searchQuery = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            ResourcesList = await ResourceRepository.GetAllAsync();
+            var owners = await OwnerProfileRepository.GetAllOwnerProfilesAsync();
+
+            foreach (var resource in ResourcesList)
+            {
+                if (resource.OwnerProfileId != null)
+                {
+                    resource.OwnerProfile = owners.FirstOrDefault(o => o.Id == resource.OwnerProfileId);
+                }
+            }
+
+            PaginationService.SetPageSize(pageSize);
+            await LoadResources();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error fetching resources: {ex.Message}");
+            ToastService.Notify("error", $"Error loading resources: {ex.Message}");
+        }
+    }
+
+    private void NavigateToAddResource()
+    {
+        Navigation.NavigateTo("/add-resource");
+    }
+
+    private void NavigateToEditResource(int resourceId)
+    {
+        Navigation.NavigateTo($"/edit-resource/{resourceId}");
+    }
+
+    private void ShowDeleteModal(int resourceId, string name)
+    {
+        resourceToDelete = resourceId;
+        resourceToDeleteName = name;
+        isDeleteModalVisible = true;
+    }
+
+    private void CancelDelete()
+    {
+        isDeleteModalVisible = false;
+        resourceToDelete = 0;
+        resourceToDeleteName = "";
+    }
+
+    private async Task ConfirmDelete()
+    {
+        try
+        {
+            await ResourceRepository.DeleteAsync(resourceToDelete);
+            ResourcesList = (await ResourceRepository.GetAllAsync()).ToList();
+            await FilterResources();
+            ToastService.Notify("success", $"Resource '{resourceToDeleteName}' deleted successfully.");
+        }
+        catch (Exception ex)
+        {
+            ToastService.Notify("error", $"Error deleting resource: {ex.Message}");
+        }
+        finally
+        {
+            isDeleteModalVisible = false;
+            resourceToDelete = 0;
+            resourceToDeleteName = "";
+        }
+    }
+
+    private async Task ToggleContractStatus(Resource resource)
+    {
+        try
+        {
+            resource.IsActive = !resource.IsActive;
+            await ResourceRepository.UpdateAsync(resource);
+            ToastService.Notify("success", $"Contract {(resource.IsActive ? "activated" : "ended")} successfully.");
+            await LoadResources();
+        }
+        catch (Exception ex)
+        {
+            ToastService.Notify("error", $"Error toggling contract status: {ex.Message}");
+        }
+    }
+
+    private async Task FilterResources()
+    {
+        filteredResources = string.IsNullOrWhiteSpace(searchQuery)
+            ? new List<Resource>(ResourcesList)
+            : ResourcesList.Where(r =>
+                (r.ResourceName?.Contains(searchQuery, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (r.Client?.Name?.Contains(searchQuery, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                (r.Employee?.EmployeeName?.Contains(searchQuery, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                r.Recurrence.ToString().Contains(searchQuery, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        await LoadPagedResources();
+    }
+    private async Task LoadPagedResources()
+    {
+        var result = await PaginationService.GetPagedDataAsync(filteredResources.AsQueryable(), currentPage);
+        pagedResources = result.PagedData;
+        totalRecords = result.TotalCount;
+        totalPages = result.TotalPages;
+    }
+
+    private async Task LoadResources()
+    {
+        ResourcesList = (await ResourceRepository.GetAllAsync()).ToList();
+        await FilterResources();
+    }
+
+    private async Task SetPageSize(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out int newSize))
+        {
+            pageSize = newSize;
+            PaginationService.SetPageSize(pageSize);
+            currentPage = 1;
+            await LoadPagedResources();
+        }
+    }
+
+    private async Task ChangePage(int page)
+    {
+        if (page >= 1 && page <= totalPages)
+        {
+            currentPage = page;
+            await LoadPagedResources();
+        }
+    }
+
+    private async Task PreviousPage()
+    {
+        if (currentPage > 1)
+        {
+            currentPage--;
+            await LoadPagedResources();
+        }
+    }
+
+    private async Task NextPage()
+    {
+        if (currentPage < totalPages)
+        {
+            currentPage++;
+            await LoadPagedResources();
+        }
+    }
+
+    private bool CanGoPrevious => currentPage > 1;
+    private bool CanGoNext => currentPage < totalPages;
+}

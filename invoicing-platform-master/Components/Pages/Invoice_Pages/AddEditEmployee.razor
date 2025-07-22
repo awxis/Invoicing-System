@@ -1,0 +1,177 @@
+﻿@page "/add-employee"
+@page "/edit-employee/{EmployeeId:int?}"
+@rendermode InteractiveServer
+@using Client_Invoice_System.Models
+@using Client_Invoice_System.Repositories
+@using Client_Invoice_System.Repository
+@using Client_Invoice_System.Services
+@inject EmployeeRepository EmployeeRepository
+@inject NavigationManager Navigation
+@inject ToastService ToastService
+<div class="d-flex align-items-center">
+    <Breadcrumb />
+</div>
+
+
+<EditForm Model="EditingEmployee" OnValidSubmit="SaveEmployee">
+    <DataAnnotationsValidator />
+
+    <div class="d-flex justify-content-center">
+        <div class="card shadow p-4 w-100" style="max-width: 500px;">
+            <h3 class="text-center text-primary mb-4">@(EmployeeId == null ? "Add Employee" : "Edit Employee")</h3>
+
+            <div class="row g-3">
+                <!-- Name Field -->
+                <div class="col-12">
+                    <label class="form-label fw-bold">Name</label>
+                    <InputText class="form-control" @bind-Value="EditingEmployee.EmployeeName"  />
+                    <ValidationMessage For="@(() => EditingEmployee.EmployeeName)" class="text-danger" />
+                </div>
+
+                <!-- Designation Field -->
+                <div class="col-12">
+                    <label class="form-label fw-bold">Designation</label>
+                    <div class="input-group">
+                        <InputSelect class="form-control" @bind-Value="designationId">
+                            <option value="">-- Select Designation --</option>
+                            @foreach (var designation in designations)
+                            {
+                                <option value="@designation.Id">@designation.DesignationName</option>
+                            }
+                        </InputSelect>
+                        <button class="btn btn-outline-secondary" type="button" @onclick="ShowDesignationModal">
+                            + Add
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Hourly Rate Field -->
+                @* <div class="col-12"> *@
+                @*     <label class="form-label fw-bold">Hourly Rate</label> *@
+                @*     <InputNumber class="form-control" @bind-Value="EditingEmployee.HourlyRate" step="0.01"  /> *@
+                @*     <ValidationMessage For="@(() => EditingEmployee.HourlyRate)" class="text-danger" /> *@
+                @* </div> *@
+
+                <!-- Buttons -->
+                <div class="col-12 d-flex flex-column flex-md-row justify-content-md-end gap-2 mt-3">
+                    <button type="submit" class="btn btn-primary w-30 w-md-auto">
+                        <i class="bi bi-save"></i>
+                        Save Employee
+                    </button>
+                    <button type="button" class="btn btn-secondary w-30 w-md-auto" @onclick="Cancel">
+                        <i class="bi bi-x-circle"></i>Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</EditForm>
+
+@if (showModal)
+{
+    <div class="modal fade show d-block" style="background-color: rgba(0, 0, 0, 0.5);" tabindex="-1">
+        <div class="d-flex justify-content-center align-items-center" style="min-height: 100vh;">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Add New Designation</h5>
+                        <button type="button" class="btn-close" @onclick="CloseDesignationModal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <label class="form-label">Designation Name</label>
+                        <InputText class="form-control" @bind-Value="newDesignationName" />
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" @onclick="CloseDesignationModal">Cancel</button>
+                        <button class="btn btn-primary" @onclick="AddDesignation">Add</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool showModal = false;
+    private int designationId;
+    private string newDesignationName;
+    [Parameter] public int? EmployeeId { get; set; }
+    private Employee EditingEmployee = new();
+    private List<Designation> designations = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            designations = await EmployeeRepository.GetAllDesignations();
+            if (EmployeeId != null)
+            {
+                EditingEmployee = await EmployeeRepository.GetByIdAsync(EmployeeId.Value) ?? new Employee();
+            }
+        }
+        catch (Exception ex)
+        {
+            ToastService.Notify("error", $"Error loading employee: {ex.Message}");
+            // Console.WriteLine($"Error loading employee: {ex.Message}");
+        }
+    }
+
+    private async Task SaveEmployee()
+    {
+        try
+        {
+            if (EmployeeId == null)
+            {
+                EditingEmployee.DesignationId = designationId;
+                await EmployeeRepository.AddAsync(EditingEmployee);
+                ToastService.Notify("success", "Employee added successfully.");
+            }
+            else
+            {
+                await EmployeeRepository.UpdateAsync(EditingEmployee);
+                ToastService.Notify("success", "Employee updated successfully.");
+            }
+
+            Navigation.NavigateTo("/employees");
+        }
+        catch (Exception ex)
+        {
+            ToastService.Notify("error", $"Error saving employee: {ex.Message}");
+            // Console.WriteLine($"Error saving employee: {ex.Message}");
+        }
+    }
+
+
+    private void Cancel()
+    {
+        Navigation.NavigateTo("/employees");
+    }
+
+    private void ShowDesignationModal()
+    {
+        newDesignationName = string.Empty;
+        showModal = true;
+    }
+
+    private void CloseDesignationModal()
+    {
+        showModal = false;
+    }
+
+    private async Task AddDesignation()
+    {
+        if (!string.IsNullOrWhiteSpace(newDesignationName))
+        {
+            var newDesignation = new Designation { DesignationName = newDesignationName };
+
+            EmployeeRepository.AddDesignationAsync(newDesignation);
+
+            // Refresh the list
+            designations = await EmployeeRepository.GetAllDesignations();
+
+            // Set the selected ID to the new one
+            EditingEmployee.DesignationId = newDesignation.Id;
+
+            CloseDesignationModal();
+        }
+    }
+}

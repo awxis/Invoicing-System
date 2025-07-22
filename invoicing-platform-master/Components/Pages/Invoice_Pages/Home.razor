@@ -1,0 +1,266 @@
+﻿@page "/"
+@rendermode InteractiveServer
+@using Client_Invoice_System.Models
+@using Client_Invoice_System.Repositories
+@using Client_Invoice_System.Repository
+@using Client_Invoice_System.Services
+@inject ClientRepository ClientRepo
+@inject InvoiceRepository InvoiceRepo
+@inject ToastService ToastService
+@inject IJSRuntime JSRuntime
+@inject ILogger<Index> Logger
+
+<div class="container">
+    <!-- Dashboard Header -->
+    <div class="dashboard-header text-center mt-4">
+        <h1 class="dashboard-title"><i class="bi bi-bar-chart"></i> Dashboard Overview</h1>
+        <hr />
+    </div>
+
+    <!-- Filter Section -->
+    <div class="row filter-section mb-4 p-3 d-flex justify-content-center align-items-center">
+        <div class="col-md-3 col-12 mb-3">
+            <label for="dateFilter"><i class="bi bi-calendar"></i> Select Date:</label>
+            <input type="date" class="form-control" @bind="SelectedDate" @bind:event="oninput" />
+        </div>
+        <div class="col-md-3 col-12 mb-3">
+            <label for="monthFilter"><i class="bi bi-calendar-month"></i> Select Month:</label>
+            <select class="form-select" @bind="SelectedMonth">
+                <option value="">All</option>
+                @for (int i = 1; i <= 12; i++)
+                {
+                    <option value="@i">@System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(i)</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-3 col-12 mb-3">
+            <label for="clientFilter"><i class="bi bi-person"></i> Select Client:</label>
+            <select class="form-select" @bind="SelectedClientId">
+                <option value="">All</option>
+                @foreach (var client in Clients)
+                {
+                    <option value="@client.ClientId">@client.Name</option>
+                }
+            </select>
+        </div>
+    </div>
+
+    <!-- Dashboard Cards Section -->
+    <div class="row row-cols-1 row-cols-md-4 g-4 text-center">
+        @foreach (var card in DashboardCards)
+        {
+            <div class="col">
+                <div class="card shadow-lg rounded-lg p-3 @card.BackgroundClass order-card">
+                    <div class="card-body">
+                        <i class="@card.Icon icon-style display-4 mb-3"></i>
+                        <h6 class="fw-bold">@card.Title</h6>
+                        <h2 class="fw-bold">@card.Value</h2>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+
+    <!-- Charts Section -->
+    @* <div class="row mt-5"> *@
+    @*     <div class="col-md-6 col-12 mb-4"> *@
+    @*         <h4 class="text-center"><i class="bi bi-graph-up"></i> Total Revenue Over Time</h4> *@
+    @*         <canvas id="barChartCanvas" class="chart-canvas"></canvas> *@
+    @*     </div> *@
+    @*     <div class="col-md-6 col-12 mb-4"> *@
+    @*         <h4 class="text-center"><i class="bi bi-pie-chart"></i> Paid vs Unpaid Invoices</h4> *@
+    @*         <canvas id="pieChartCanvas" class="chart-canvas"></canvas> *@
+    @*     </div> *@
+    @* </div> *@
+
+    <style>
+        .chart-canvas {
+            max-width: 450px;
+            width: 100%;
+            margin: auto;
+        }
+    </style>
+</div>
+
+@code {
+    private DateTime? _selectedDate = new DateTime(2025, 5, 19, 18, 36, 0); // Updated to current time (06:36 PM PKT, May 19, 2025)
+    private int? _selectedMonth;
+    private int? _selectedClientId;
+
+    private DateTime? SelectedDate
+    {
+        get => _selectedDate;
+        set
+        {
+            _selectedDate = value;
+            _ = LoadDashboardData();
+        }
+    }
+    private int? SelectedMonth
+    {
+        get => _selectedMonth;
+        set
+        {
+            _selectedMonth = value;
+            _ = LoadDashboardData();
+        }
+    }
+    private int? SelectedClientId
+    {
+        get => _selectedClientId;
+        set
+        {
+            _selectedClientId = value;
+            _ = LoadDashboardData();
+        }
+    }
+
+    private List<Client> Clients = new();
+    private List<DashboardCard> DashboardCards = new();
+    private List<ChartData> RevenueData = new();
+    private List<ChartData> InvoiceData = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadClients();
+        await LoadDashboardData();
+    }
+
+    private async Task LoadClients()
+    {
+        try
+        {
+            Clients = await ClientRepo.GetAllClientsWithDetailsAsync();
+            Logger.LogInformation("Clients loaded successfully.");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading clients.");
+            ToastService.Notify("error", "Failed to load clients.");
+        }
+    }
+
+    private async Task LoadDashboardData()
+    {
+        try
+        {
+            var invoices = await InvoiceRepo.GetFilteredInvoicesAsync(SelectedDate, SelectedMonth, SelectedClientId);
+            var totalRevenue = invoices.Where(i => i.IsPaid).Sum(i => i.TotalAmount ?? 0m); // Handle nullable decimal
+            var unpaidInvoices = invoices.Where(i => !i.IsPaid).Sum(i => i.TotalAmount ?? 0m); // Handle nullable decimal
+
+            int totalEmployees = 0;
+            int activeContracts = 0;
+
+            bool isFilterApplied = SelectedClientId.HasValue || SelectedDate.HasValue || SelectedMonth.HasValue;
+            if (isFilterApplied)
+            {
+                totalEmployees = 0;
+                if (SelectedClientId.HasValue)
+                {
+                    var client = await ClientRepo.GetClientWithResourcesAsync(SelectedClientId.Value);
+                    activeContracts = client?.Resources?.Count(r => r.IsActive) ?? 0;
+
+                    var employees = await ClientRepo.GetEmployeesByClientIdAsync(SelectedClientId.Value);
+                    totalEmployees = employees.Count;
+                }
+            }
+            else
+            {
+                totalEmployees = await ClientRepo.GetTotalEmployeesAsync();
+                activeContracts = await ClientRepo.GetActiveContractsCountAsync();
+            }
+
+            UpdateDashboardCards(totalRevenue , unpaidInvoices , totalEmployees, activeContracts); // Explicit conversion
+            // UpdateChartData(invoices);
+            // await LoadCharts();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error fetching dashboard data.");
+            ToastService.Notify("error", "Failed to load dashboard data.");
+        }
+    }
+
+    private void UpdateDashboardCards(decimal totalRevenue, decimal unpaidInvoices, int totalEmployees, int activeContracts)
+    {
+        // Determine the currency symbol based on the selected client, or use the first client's currency, or default to "$"
+        string currencySymbol = "$"; // Default to USD
+        if (SelectedClientId.HasValue && Clients.Any(c => c.ClientId == SelectedClientId.Value))
+        {
+            var client = Clients.First(c => c.ClientId == SelectedClientId.Value);
+            currencySymbol = client.CountryCurrency?.Symbol ?? "$";
+        }
+        else if (Clients.Any())
+        {
+            currencySymbol = Clients.First().CountryCurrency?.Symbol ?? "$";
+        }
+
+        DashboardCards = new List<DashboardCard>
+        {
+            new DashboardCard("Total Revenue", $"{currencySymbol}{totalRevenue:F2}", "bi bi-cash-coin", "bg-c-blue"),
+            new DashboardCard("Unpaid Invoices", $"{currencySymbol}{unpaidInvoices:F2}", "bi bi-exclamation-triangle-fill", "bg-c-green"),
+            new DashboardCard("Total Employees", totalEmployees.ToString(), "bi bi-person-badge", "bg-c-orange"),
+            new DashboardCard("Active Contracts", activeContracts.ToString(), "bi bi-file-earmark-text", "bg-c-purple")
+        };
+
+        StateHasChanged();
+    }
+
+    private void UpdateChartData(List<Invoice> invoices)
+    {
+        RevenueData = invoices
+            .GroupBy(i => i.CreatedAt.Month)
+            .Select(g => new ChartData
+                {
+                    Label = System.Globalization.CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(g.Key),
+                    Value = g.Sum(i => i.TotalAmount ?? 0m) // Handle nullable decimal
+                })
+            .ToList();
+
+        InvoiceData = new List<ChartData>
+        {
+            new ChartData { Label = "Paid", Value = invoices.Where(i => i.IsPaid).Sum(i => i.TotalAmount ?? 0m) }, // Handle nullable decimal
+            new ChartData { Label = "Unpaid", Value = invoices.Where(i => !i.IsPaid).Sum(i => i.TotalAmount ?? 0m) }, // Handle nullable decimal
+            // new ChartData { Label = "Partial", Value = invoices.Where(i => i.InvoiceStatuses == InvoiceStatus.Partial).Sum(i => i.TotalAmount ?? 0m) } // Handle nullable decimal
+        };
+
+        StateHasChanged();
+    }
+
+    private async Task LoadCharts()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("createBarChart", "barChartCanvas", RevenueData);
+            await JSRuntime.InvokeVoidAsync("createPieChart", "pieChartCanvas", InvoiceData);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading charts.");
+            ToastService.Notify("error", "Failed to load charts.");
+        }
+    }
+
+    // Dashboard Card and Chart Data classes
+    private class DashboardCard
+    {
+        public string Title { get; }
+        public string Value { get; }
+        public string Icon { get; }
+        public string BackgroundClass { get; }
+
+        public DashboardCard(string title, string value, string icon, string backgroundClass)
+        {
+            Title = title;
+            Value = value;
+            Icon = icon;
+            BackgroundClass = backgroundClass;
+        }
+    }
+
+    private class ChartData
+    {
+        public string Label { get; set; }
+        public decimal Value { get; set; }
+    }
+}

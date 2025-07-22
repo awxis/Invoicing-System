@@ -1,0 +1,427 @@
+﻿@page "/clients"
+@rendermode InteractiveServer
+@using Client_Invoice_System.Helpers
+@using Client_Invoice_System.Models
+@using Client_Invoice_System.Repositories
+@using Client_Invoice_System.Repository
+@inject ClientRepository ClientRepo
+@inject NavigationManager Navigation
+@using Client_Invoice_System.Components
+@using Client_Invoice_System.Services
+@inject IPaginationService<Client> PaginationService
+@inject ToastService ToastService
+
+<div class="d-flex align-items-center">
+    <Breadcrumb />
+</div>
+<div class="">
+    <div class="col-12 col-md-6">
+        <h3>Clients (@(filteredClients?.Count ?? 0))</h3>
+    </div>
+
+    <div class="row mb-3 mt-5 div-responsive">
+        <div class="col-md-6">
+            <div class="input-group shadow rounded" style="max-width: 300px;">
+                <input type="text" class="form-control form-control-sm border-primary rounded-start" placeholder="🔍 Search..." @bind="searchQuery" @oninput="FilterClients" />
+                <button class="btn btn-primary fw-bold px-3" @onclick="FilterClients"><i class="bi bi-search"></i></button>
+            </div>
+        </div>
+        <div class="col-md-6 text-end d-flex justify-content-end gap-2">
+            <button class="btn btn-primary fw-bold px-4 py-2 shadow-lg rounded w-30 w-md-auto" @onclick="AddClient"><i class="bi bi-plus-circle me-1"></i> Add Client</button>
+            @* <button class="btn btn-success fw-bold px-4 py-2 shadow-lg rounded w-30 w-md-auto" @onclick="ToggleRestoreDropdown"><i class="bi bi-arrow-counterclockwise me-1"></i> Restore Clients</button> *@
+        </div>
+    </div>
+
+    @* <!-- Restore Client Dropdown --> *@
+    @* @if (showRestoreDropdown) *@
+    @* { *@
+    @*     <div class="row mb-3"> *@
+    @*         <div class="col-md-6"> *@
+    @*             <div class="input-group shadow rounded"> *@
+    @*                 <select class="form-control" @bind="selectedDeletedClientId"> *@
+    @*                     <option value="0">Select a client to restore...</option> *@
+    @*                     @foreach (var client in deletedClients) *@
+    @*                     { *@
+    @*                         <option value="@client.ClientId">@client.Name (ID: @client.ClientId)</option> *@
+    @*                     } *@
+    @*                 </select> *@
+    @*                 <button class="btn btn-success" @onclick="RestoreClient" disabled="@(selectedDeletedClientId == 0)"> *@
+    @*                     <i class="bi bi-check-circle me-1"></i> Restore *@
+    @*                 </button> *@
+    @*             </div> *@
+    @*             @if (!deletedClients.Any()) *@
+    @*             { *@
+    @*                 <p class="text-muted mt-2">No deleted clients available to restore.</p> *@
+    @*             } *@
+    @*         </div> *@
+    @*     </div> *@
+    @* } *@
+
+    <div class="row mt-3">
+        <div class="col-12">
+            <div class="card p-3 shadow-lg rounded-4 bg-white div-responsive">
+                <p id="noResults" class="text-center text-danger d-none">No matching records found.</p>
+                <div class="table-responsive" style="max-height:500px; overflow-y:auto;">
+                    <table class="table table-striped">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th><i class="bi bi-person"></i> Name</th>
+                                <th><i class="bi bi-envelope"></i> Email</th>
+                                <th><i class="bi bi-geo-alt"></i> Address</th>
+                                <th><i class="bi bi-telephone"></i> Phone</th>
+                                <th><i class="bi bi-globe"></i> Country</th>
+                                <th><i class="bi bi-currency-exchange"></i> Currency</th>
+                                <th><i class="bi bi-hash"></i> Client ID</th>
+                                <th><i class="bi bi-tools"></i> Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @if (pagedClients != null && pagedClients.Any())
+                            {
+                                @foreach (var client in pagedClients)
+                                {
+                                    <tr>
+                                        <td>@client.Name</td>
+                                        <td class="text-truncate">@client.Email</td>
+                                        <td class="text-truncate">@client.Address</td>
+                                        <td>@client.PhoneNumber</td>
+                                        <td>@(client.CountryCurrency?.CountryName ?? "N/A")</td>
+                                        <td>
+                                            @(client.CustomCurrency?.Trim() != ""
+                                                ? client.CustomCurrency
+                                                : client.CountryCurrency?.CurrencyName ?? "N/A")
+                                            (@(client.CountryCurrency?.CurrencyCode ?? "-") - @(client.CountryCurrency?.Symbol ?? "-"))
+                                        </td>
+                                        <td>@client.ClientIdentifier</td>
+                                        <td class="nowrap d-flex flex-column flex-md-row gap-2">
+                                            <button class="btn btn-sm btn-warning me-2" @onclick="() => EditClient(client.ClientId)">
+                                                <i class="bi bi-pencil-square"></i> Edit
+                                            </button>
+                                            <button class="btn btn-sm btn-danger" @onclick="() => ShowDeleteModal(client.ClientId, client.Name)">
+                                                <i class="bi bi-trash"></i> Delete
+                                            </button>
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                            else
+                            {
+                                <tr>
+                                    <td colspan="8" class="text-center text-muted">No clients found</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div class="d-flex align-items-center justify-content-center mt-3">
+                    <ul class="pagination mb-0">
+                        <li class="page-item @(CanGoPrevious ? "" : "disabled")">
+                            <a class="page-link shadow-sm" href="javascript:void(0);" @onclick="PreviousPage">«</a>
+                        </li>
+                        @for (int i = 1; i <= totalPages; i++)
+                        {
+                            <li class="page-item @(i == currentPage ? "active" : "")">
+                                <a class="page-link fw-bold shadow-sm" href="javascript:void(0);" @onclick="() => ChangePage(i)">@i</a>
+                            </li>
+                        }
+                        <li class="page-item @(CanGoNext ? "" : "disabled")">
+                            <a class="page-link shadow-sm" href="javascript:void(0);" @onclick="NextPage">»</a>
+                        </li>
+                    </ul>
+                    <div class="d-flex align-items-center ms-3">
+                        <select class="form-select w-auto text-center shadow-sm border-primary" @onchange="SetPageSize">
+                            @foreach (var size in new int[] { 5, 10, 15, 20, 50, 100 })
+                            {
+                                <option value="@size" selected="@(size == pageSize)">Show @size</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (isDeleteModalVisible)
+{
+    <div class="modal-overlay">
+        <div class="delete-modal">
+            <p class="fw-bold">Are you sure you want to delete <span class="text-danger">@clientToDeleteName</span>?</p>
+            <div class="d-flex flex-column flex-md-row justify-content-center gap-3">
+                <button class="btn btn-danger w-100 w-md-auto" @onclick="ConfirmDelete"><i class="fas fa-trash"></i> Yes, Delete</button>
+                <button class="btn btn-secondary w-100 w-md-auto" @onclick="CancelDelete"><i class="bi bi-x-circle"></i> Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .container {
+        min-height: 100vh;
+        overflow: auto;
+    }
+
+    .table-responsive {
+        overflow-x: auto;
+        overflow-y: auto;
+        max-height: 500px;
+    }
+
+    .div-responsive {
+        max-width: calc(100vw - 320px);
+    }
+
+    .card {
+        display: flex;
+        flex-direction: column;
+    }
+
+    th, td {
+        min-width: 150px;
+    }
+
+        td.nowrap {
+            white-space: nowrap;
+        }
+
+    .btn-sm {
+        min-width: 70px;
+    }
+
+    tbody td {
+        text-align: center;
+        vertical-align: middle;
+    }
+
+    thead th {
+        text-align: center;
+    }
+
+    .pagination {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+    }
+
+    .table thead {
+        position: sticky;
+        top: 0;
+        background: white;
+        z-index: 10;
+    }
+
+    .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 1050;
+    }
+
+    .delete-modal {
+        background: white;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
+        text-align: center;
+        max-width: 400px;
+    }
+</style>
+
+@code {
+    private List<Client> clients = new();
+    private List<Client> deletedClients = new();
+    private List<Client> filteredClients = new();
+    private List<Client> pagedClients = new();
+    private bool isDeleteModalVisible = false;
+    private bool showRestoreDropdown = false;
+    private int clientToDeleteId;
+    private string clientToDeleteName;
+    private int currentPage = 1;
+    private int pageSize = 5;
+    private int totalRecords;
+    private int totalPages;
+    private int selectedDeletedClientId = 0;
+    private bool CanGoPrevious => currentPage > 1;
+    private bool CanGoNext => currentPage < totalPages;
+    private string searchQuery = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            // Load active clients (IsDeleted = false)
+            clients = (await ClientRepo.GetAllAsync(true)).ToList();
+            filteredClients = clients; 
+
+            // Load deleted clients (IsDeleted = true) for the restore dropdown
+            // deletedClients = await ClientRepo.GetDeletedClientsAsync();
+
+            PaginationService.SetPageSize(pageSize);
+            await LoadClients();
+        }
+        catch (Exception ex)
+        {
+            ToastService.Notify("error", $"Error loading clients: {ex.Message}");
+        }
+    }
+
+    private async Task LoadClients()
+    {
+        try
+        {
+            var filteredData = string.IsNullOrWhiteSpace(searchQuery)
+                ? filteredClients.AsQueryable()
+                : filteredClients.AsQueryable().Where(c =>
+                    c.Name.Contains(searchQuery, StringComparison.OrdinalIgnoreCase) ||
+                    c.Email.Contains(searchQuery, StringComparison.OrdinalIgnoreCase) ||
+                    c.Address.Contains(searchQuery, StringComparison.OrdinalIgnoreCase) ||
+                    c.PhoneNumber.Contains(searchQuery, StringComparison.OrdinalIgnoreCase));
+
+            var result = await PaginationService.GetPagedDataAsync(filteredData, currentPage);
+            pagedClients = result.PagedData;
+            totalRecords = result.TotalCount;
+            totalPages = result.TotalPages;
+        }
+        catch (Exception ex)
+        {
+            ToastService.Notify("error", $"Error filtering clients: {ex.Message}");
+        }
+    }
+
+    private void AddClient()
+    {
+        Navigation.NavigateTo("/add-client");
+    }
+
+    private void EditClient(int id)
+    {
+        Navigation.NavigateTo($"/edit-client/{id}");
+    }
+
+    private void ShowDeleteModal(int id, string name)
+    {
+        clientToDeleteId = id;
+        clientToDeleteName = name;
+        isDeleteModalVisible = true;
+        StateHasChanged();
+    }
+
+    private void CancelDelete()
+    {
+        isDeleteModalVisible = false;
+        StateHasChanged();
+    }
+
+    // private void ToggleRestoreDropdown()
+    // {
+    //     showRestoreDropdown = !showRestoreDropdown;
+    //     if (!showRestoreDropdown)
+    //     {
+    //         selectedDeletedClientId = 0;
+    //     }
+    //     StateHasChanged();
+    // }
+
+    // private async Task RestoreClient()
+    // {
+    //     if (selectedDeletedClientId == 0)
+    //     {
+    //         ToastService.Notify("warning", "Please select a client to restore.");
+    //         return;
+    //     }
+
+    //     try
+    //     {
+    //         await ClientRepo.RestoreClientAsync(selectedDeletedClientId);
+    //         ToastService.Notify("success", "Client restored successfully.");
+
+    //         Refresh lists
+    //         clients = (await ClientRepo.GetAllAsync(true)).ToList();
+    //         filteredClients = clients;
+    //         deletedClients = await ClientRepo.GetDeletedClientsAsync();
+    //         await LoadClients();
+
+    //         Reset dropdown
+    //         selectedDeletedClientId = 0;
+    //         showRestoreDropdown = false;
+    //     }
+    //     catch (Exception ex)
+    //     {
+    //         ToastService.Notify("error", $"Error restoring client: {ex.Message}");
+    //     }
+    // }
+
+    private void LoadPagedClients()
+    {
+        pagedClients = filteredClients.Skip((currentPage - 1) * pageSize).Take(pageSize).ToList();
+    }
+
+    private async Task FilterClients()
+    {
+        currentPage = 1;
+        await LoadClients();
+    }
+
+    private void PreviousPage()
+    {
+        if (currentPage > 1)
+        {
+            currentPage--;
+            LoadClients();
+        }
+    }
+
+    private void NextPage()
+    {
+        if (currentPage < totalPages)
+        {
+            currentPage++;
+            LoadClients();
+        }
+    }
+
+    private async Task SetPageSize(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value.ToString(), out int newSize))
+        {
+            pageSize = newSize;
+            PaginationService.SetPageSize(pageSize);
+            currentPage = 1;
+            await LoadClients();
+            StateHasChanged();
+        }
+    }
+
+    private void ChangePage(int page)
+    {
+        if (page >= 1 && page <= totalPages)
+        {
+            currentPage = page;
+            LoadPagedClients();
+        }
+    }
+
+    private async Task ConfirmDelete()
+    {
+        try
+        {
+            await ClientRepo.DeleteAsync(clientToDeleteId);
+            clients = (await ClientRepo.GetAllAsync(true)).ToList();
+            filteredClients = clients;
+            // deletedClients = await ClientRepo.GetDeletedClientsAsync();
+            await LoadClients();
+            isDeleteModalVisible = false;
+            ToastService.Notify("success", "Client deleted successfully.");
+        }
+        catch (Exception ex)
+        {
+            ToastService.Notify("error", $"Error deleting client: {ex.Message}");
+        }
+    }
+}

@@ -1,0 +1,197 @@
+﻿@page "/add-resource"
+@page "/edit-resource/{ResourceId:int}"
+@rendermode InteractiveServer
+@using Client_Invoice_System.Models
+@using Client_Invoice_System.Repository
+@using Client_Invoice_System.Services
+@using Client_Invoice_System.Components
+@using static Client_Invoice_System.Models.Resource
+@inject NavigationManager NavigationManager
+@inject ResourceRepository ResourceRepository
+@inject ClientRepository ClientRepository
+@inject EmployeeRepository EmployeeRepository
+@inject OwnerRepository OwnerRepository
+@inject ToastService ToastService
+
+<div class="d-flex align-items-center mb-3">
+    <Breadcrumb />
+</div>
+
+<div class="card p-4 shadow-lg rounded-4 bg-white div-responsive">
+    <h3 class="mb-4">@(ResourceId == 0 ? "Add Contract" : "Edit Contract")</h3>
+
+    <EditForm Model="resource" OnValidSubmit="HandleValidSubmit">
+        <DataAnnotationsValidator />
+        <ValidationSummary class="text-danger mb-3" />
+
+        <div class="row">
+            <div class="col-md-6 mb-3">
+                <div class="form-group">
+                    <label for="client"><i class="bi bi-person-fill me-1"></i> Client</label>
+                    <InputSelect id="client" class="form-control shadow-sm" @bind-Value="resource.ClientId">
+                        <option value="0">Select Client</option>
+                        @foreach (var client in clients)
+                        {
+                            <option value="@client.ClientId">@client.Name</option>
+                        }
+                    </InputSelect>
+                </div>
+            </div>
+
+            <div class="col-md-6 mb-3">
+                <div class="form-group">
+                    <label for="resourceName"><i class="bi bi-box-seam me-1"></i> service</label>
+                    <InputText id="resourceName" class="form-control shadow-sm" @bind-Value="resource.ResourceName" />
+                </div>
+            </div>
+
+            <div class="col-md-6 mb-3">
+                <div class="form-group">
+                    <label for="employee"><i class="bi bi-person-workspace me-1"></i> Employee</label>
+                    <InputSelect id="employee" class="form-control shadow-sm" @bind-Value="resource.EmployeeId">
+                        <option value="0">Select Employee</option>
+                        @foreach (var employee in employees)
+                        {
+                            <option value="@employee.EmployeeId">@employee.EmployeeName</option>
+                        }
+                    </InputSelect>
+                </div>
+            </div>
+
+            <div class="col-md-6 mb-3">
+                <div class="form-group">
+                    <label for="committedHours"><i class="bi bi-clock me-1"></i> Committed Hours</label>
+                    <InputNumber id="committedHours" class="form-control shadow-sm" @bind-Value="resource.CommittedHours" />
+                </div>
+            </div>
+
+            @* <div class="col-md-6 mb-3"> *@
+            @*     <div class="form-group"> *@
+            @*         <label for="rate"><i class="bi bi-currency-dollar me-1"></i> Rate</label> *@
+            @*         <InputNumber id="rate" class="form-control shadow-sm" @bind-Value="resource.Rate" /> *@
+            @*     </div> *@
+            @* </div> *@
+
+            @* <div class="col-md-6 mb-3"> *@
+            @*     <div class="form-group"> *@
+            @*         <label for="variation"><i class="bi bi-list-check me-1"></i> Variation</label> *@
+            @*         <InputSelect id="variation" class="form-control shadow-sm" @bind-Value="resource.Variation"> *@
+            @*             <option value="@ContractVariation.Hourly">Hourly</option> *@
+            @*             <option value="@ContractVariation.Fixed">Fixed</option> *@
+            @*         </InputSelect> *@
+            @*     </div> *@
+            @* </div> *@
+
+            <div class="col-md-6 mb-3">
+                <div class="form-group">
+                    <label for="recurrence"><i class="bi bi-calendar-week me-1"></i> Recurrence</label>
+                    <InputSelect id="recurrence" class="form-control shadow-sm" @bind-Value="resource.Recurrence">
+                        <option value="@RecurrenceType.Monthly">Monthly</option>
+                        <option value="@RecurrenceType.Weekly">Weekly</option>
+                    </InputSelect>
+                </div>
+            </div>
+
+            <div class="col-md-6 mb-3">
+                <div class="form-group">
+                    <label for="ownerProfile"><i class="bi bi-person-badge me-1"></i> Owner Profile</label>
+                    <InputSelect id="ownerProfile" class="form-control shadow-sm" @bind-Value="resource.OwnerProfileId">
+                        <option value="">Select Owner Profile</option>
+                        @foreach (var owner in ownerProfiles)
+                        {
+                            <option value="@owner.Id">@owner.OwnerName</option>
+                        }
+                    </InputSelect>
+                </div>
+            </div>
+        </div>
+
+        <div class="d-flex justify-content-end gap-2">
+            <button type="submit" class="btn btn-primary"><i class="bi bi-save me-1"></i> Save</button>
+            <button type="button" class="btn btn-secondary" @onclick="Cancel"><i class="bi bi-x-circle me-1"></i> Cancel</button>
+        </div>
+    </EditForm>
+</div>
+
+<style>
+    .div-responsive {
+        max-width: calc(100vw - 320px);
+    }
+
+    .form-control, .btn {
+        border-radius: 0.375rem;
+    }
+
+    .form-group label {
+        font-weight: 500;
+    }
+</style>
+
+@code {
+    [Parameter]
+    public int ResourceId { get; set; }
+
+    private Resource resource = new Resource();
+    private List<Client> clients = new List<Client>();
+    private List<Employee> employees = new List<Employee>();
+    private List<OwnerProfile> ownerProfiles = new List<OwnerProfile>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            clients = (await ClientRepository.GetAllAsync()).ToList();
+            employees = (await EmployeeRepository.GetAllAsync()).ToList();
+            ownerProfiles = (await OwnerRepository.GetAllOwnerProfilesAsync()).ToList();
+
+            if (ResourceId != 0)
+            {
+                resource = await ResourceRepository.GetByIdAsync(ResourceId) ?? new Resource();
+            }
+        }
+        catch (Exception ex)
+        {
+            ToastService.Notify("error", $"Error loading data: {ex.Message}");
+        }
+    }
+
+    private async Task HandleValidSubmit()
+    {
+        try
+        {
+            if (resource.ClientId == 0 || resource.EmployeeId == 0)
+            {
+                ToastService.Notify("error", "Please select a valid Client and Employee.");
+                return;
+            }
+
+            if (resource.CommittedHours <= 0)
+            {
+                ToastService.Notify("error", "Committed Hours must be positive.");
+                return;
+            }
+
+
+            if (ResourceId == 0)
+            {
+                await ResourceRepository.AddAsync(resource);
+                ToastService.Notify("success", "Contract added successfully.");
+            }
+            else
+            {
+                await ResourceRepository.UpdateAsync(resource);
+                ToastService.Notify("success", "Contract updated successfully.");
+            }
+            NavigationManager.NavigateTo("/resources");
+        }
+        catch (Exception ex)
+        {
+            ToastService.Notify("error", $"Error saving contract: {ex.Message}");
+        }
+    }
+
+    private void Cancel()
+    {
+        NavigationManager.NavigateTo("/resources");
+    }
+}

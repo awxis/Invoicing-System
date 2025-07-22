@@ -1,0 +1,240 @@
+﻿@page "/add-client"
+@page "/edit-client/{ClientId:int}"
+@rendermode InteractiveServer
+@using Client_Invoice_System.Models
+@using Client_Invoice_System.Repositories
+@using Client_Invoice_System.Repository
+@using Client_Invoice_System.Services
+@inject ClientRepository ClientRepo
+@inject NavigationManager Navigation
+@inject CountryCurrencyRepository CountryCurrencyRepository
+@inject ToastService ToastService
+
+<div class="d-flex align-items-center">
+    <Breadcrumb />
+</div>
+
+<EditForm Model="client" OnValidSubmit="SaveClient">
+    <DataAnnotationsValidator />
+    <div class="d-flex justify-content-center">
+        <div class="card shadow p-4 w-100" style="max-width: 650px;">
+            <h3 class="text-center text-primary mb-4">
+                @(ClientId == 0 ? "Add Client" : "Edit Client")
+            </h3>
+
+            <!-- Row 1: Name & Email -->
+            <div class="row">
+                <div class="col-12 col-md-6 mb-3">
+                    <label class="form-label">Name:</label>
+                    <InputText class="form-control" @bind-Value="client.Name" />
+                    <ValidationMessage For="@(() => client.Name)" class="text-danger" />
+                </div>
+                <div class="col-12 col-md-6 mb-3">
+                    <label class="form-label">Email:</label>
+                    <InputText class="form-control" type="email" @bind-Value="client.Email" />
+                    <ValidationMessage For="@(() => client.Email)" class="text-danger" />
+                </div>
+            </div>
+
+            <!-- Row 2: Address & Phone -->
+            <div class="row">
+                <div class="col-12 col-md-6 mb-3">
+                    <label class="form-label">Address:</label>
+                    <InputText class="form-control" @bind-Value="client.Address" />
+                    <ValidationMessage For="@(() => client.Address)" class="text-danger" />
+                </div>
+                <div class="col-12 col-md-6 mb-3">
+                    <label class="form-label">Phone Number:</label>
+                    <InputText class="form-control" @bind-Value="client.PhoneNumber" />
+                </div>
+            </div>
+
+            <!-- Row 3: Searchable Dropdown -->
+            <div class="row">
+                <div class="col-12 col-md-6 mb-3 position-relative">
+                    <label for="currencySearch" class="form-label fw-bold">
+                        <i class="bi bi-currency-exchange me-1"></i> Country & Currency
+                    </label>
+                    <input type="text" id="currencySearch" class="form-control" placeholder="Search country or currency..."
+                           @bind="currencySearchQuery" @oninput="FilterCurrencies"
+                           @onfocus="() => ShowCurrencyDropdown = true"
+                           @onblur="OnCurrencySearchBlur" />
+
+                    @if (ShowCurrencyDropdown)
+                    {
+                        <ul class="dropdown-menu show w-100" style="max-height: 200px; overflow-y: auto;">
+                            @foreach (var currency in filteredCurrencies)
+                            {
+                                var displayLabel = $"{currency.CountryName} ({currency.CurrencyCode} - {currency.Symbol})";
+                                <li class="dropdown-item"
+                                    @onclick="() => SelectCurrency(currency.Id, displayLabel)"
+                                    style="cursor: pointer;">
+                                    @displayLabel
+                                </li>
+                            }
+
+                            @if (!filteredCurrencies.Any() && !string.IsNullOrWhiteSpace(currencySearchQuery))
+                            {
+                                <li class="dropdown-item text-muted">No matching results</li>
+                            }
+                        </ul>
+                    }
+                </div>
+
+                <div class="col-12 col-md-6 mb-3">
+                    <label class="form-label">Selected Currency</label>
+                    <InputText class="form-control" @bind-Value="SelectedCurrency" readonly />
+                    <input type="hidden" @bind="client.CountryCurrencyId" />
+                    <ValidationMessage For="@(() => client.CountryCurrencyId)" class="text-danger" />
+                </div>
+
+                <div class="col-12 col-md-6 mb-3">
+                    <label class="form-label">Selected Currency</label>
+                    <input type="text" class="form-control" value="@SelectedCurrency" readonly />
+                </div>
+            </div>
+
+            <!-- Row 4: Custom Currency & Client ID -->
+            <div class="row">
+                <div class="col-12 col-md-6 mb-3">
+                    <label class="form-label">Custom Currency (Optional)</label>
+                    <input type="text" class="form-control" @bind="client.CustomCurrency" placeholder="Override Default Currency" />
+                </div>
+                <div class="col-12 col-md-6 mb-3">
+                    <label class="form-label">Client Identifier:</label>
+                    <InputText class="form-control" @bind-Value="client.ClientIdentifier" maxlength="5" />
+                    <ValidationMessage For="@(() => client.ClientIdentifier)" class="text-danger" />
+                </div>
+            </div>
+
+            <!-- Row 5: Invoice Series Starting Number -->
+            <div class="row">
+                <div class="col-12 mb-3">
+                    <label class="form-label">Invoice Series Starting Number:</label>
+                    <InputNumber class="form-control" @bind-Value="client.InvoiceSeriesStart" />
+                    <ValidationMessage For="@(() => client.InvoiceSeriesStart)" class="text-danger" />
+                    <small class="text-muted">Enter the starting number for this client's invoice series (e.g., 602 for 000602).</small>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="d-flex justify-content-end gap-2 flex-wrap mt-4">
+                <button type="button" class="btn btn-secondary me-3" @onclick="Cancel">
+                    <i class="bi bi-x-circle me-1"></i> Cancel
+                </button>
+                <button type="submit" class="btn btn-primary">
+                    @if (ClientId == 0)
+                    {
+                        <text><i class="bi bi-save me-1"></i> Save</text>
+                    }
+                    else
+                    {
+                        <text><i class="bi bi-pencil-square me-1"></i> Update</text>
+                    }
+                </button>
+            </div>
+        </div>
+    </div>
+</EditForm>
+
+@code {
+    [Parameter] public int ClientId { get; set; }
+    private Client client = new();
+    private List<CountryCurrency> CountryCurrencyList = new();
+    private List<CountryCurrency> filteredCurrencies = new();
+    private string SelectedCurrency = "";
+    private string currencySearchQuery = "";
+    private bool ShowCurrencyDropdown = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            CountryCurrencyList = (await CountryCurrencyRepository.GetAllAsync()).ToList();
+            filteredCurrencies = CountryCurrencyList;
+
+            if (ClientId != 0)
+            {
+                client = await ClientRepo.GetByIdAsync(ClientId) ?? new Client();
+            }
+
+            UpdateSelectedCurrency();
+            currencySearchQuery = SelectedCurrency;
+        }
+        catch (Exception ex)
+        {
+            ToastService.Notify("error", $"Error loading client or countries: {ex.Message}");
+        }
+    }
+
+    private async Task SaveClient()
+    {
+        try
+        {
+            if (ClientId == 0)
+            {
+                await ClientRepo.AddAsync(client);
+                ToastService.Notify("success", "Client added successfully!");
+            }
+            else
+            {
+                await ClientRepo.UpdateAsync(client);
+                ToastService.Notify("info", "Client updated successfully!");
+            }
+
+            Navigation.NavigateTo("/clients");
+        }
+        catch (Exception ex)
+        {
+            ToastService.Notify("error", $"Error saving client: {ex.Message}");
+        }
+    }
+
+    private void UpdateSelectedCurrency()
+    {
+        var selected = CountryCurrencyList.FirstOrDefault(c => c.Id == client.CountryCurrencyId);
+        SelectedCurrency = selected != null ? $"{selected.CurrencyName} ({selected.Symbol})" : "";
+    }
+
+    private void FilterCurrencies(ChangeEventArgs e)
+    {
+        currencySearchQuery = e.Value?.ToString() ?? "";
+        filteredCurrencies = string.IsNullOrWhiteSpace(currencySearchQuery)
+            ? CountryCurrencyList
+            : CountryCurrencyList
+                .Where(c =>
+                    c.CountryName.Contains(currencySearchQuery, StringComparison.OrdinalIgnoreCase) ||
+                    c.CurrencyCode.Contains(currencySearchQuery, StringComparison.OrdinalIgnoreCase) ||
+                    c.CurrencyName.Contains(currencySearchQuery, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+    }
+
+    private void SelectCurrency(int? id, string label)
+    {
+        if (id.HasValue)
+        {
+            client.CountryCurrencyId = id.Value;
+            var selected = CountryCurrencyList.FirstOrDefault(c => c.Id == id.Value);
+            SelectedCurrency = selected != null ? $"{selected.CurrencyName} ({selected.Symbol})" : "";
+        }
+        else
+        {
+            SelectedCurrency = label;
+            client.CountryCurrencyId = 0;
+        }
+
+        currencySearchQuery = label;
+        ShowCurrencyDropdown = false;
+    }
+
+    private async void OnCurrencySearchBlur(FocusEventArgs e)
+    {
+        await Task.Delay(150); // Allow time for click to register before hiding
+        ShowCurrencyDropdown = false;
+    }
+
+    private async Task Cancel()
+    {
+        Navigation.NavigateTo("/clients");
+    }
+}
